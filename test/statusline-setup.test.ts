@@ -571,7 +571,7 @@ describe('mokkan statusline (setup)', () => {
       const res = await run(['--claude'], { cliPath: npx });
       expect(res.code).toBe(1);
       expect(res.stderr).toContain('/mokkan:mokkan statusline');
-      expect(res.stderr).toContain('npm i -g mokkan');
+      expect(res.stderr).toContain('npm i -g @vicmpen/mokkan-cli');
       expect(existsSync(settings)).toBe(false);
     });
 

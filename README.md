@@ -28,18 +28,18 @@ The plugin provides:
 - **`/mokkan:mokkan <command>`**, for example `/mokkan:mokkan push call the bank` or `/mokkan:mokkan list`. Claude can also invoke it when you ask it to remember something.
 - **Hooks**: reminders that are due appear when a session starts and after Claude replies.
 
-The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and hooks run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx mokkan …` there, or install the npm package.
+The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and hooks run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
 
 ### Terminal (npm)
 
 ```
-npm install -g mokkan
+npm install -g @vicmpen/mokkan-cli
 mokkan help
 ```
 
 ### Codex (skill)
 
-Install the CLI with `npm install -g mokkan`, then copy or link the skill directory from this repository:
+Install the CLI with `npm install -g @vicmpen/mokkan-cli`, then copy or link the skill directory from this repository:
 
 ```
 git clone https://github.com/vicmpen/mokkan
@@ -107,7 +107,7 @@ mokkan statusline --dry-run  # show the changes, write nothing
 mokkan statusline --remove   # undo
 ```
 
-Set it up from the plugin or from a global install (`npm install -g mokkan`), not with `npx mokkan statusline`: npx runs mokkan from a temporary cache that npm may delete, so mokkan refuses to point a status line there.
+Set it up from the plugin or from a global install (`npm install -g @vicmpen/mokkan-cli`), not with `npx @vicmpen/mokkan-cli statusline`: npx runs mokkan from a temporary cache that npm may delete, so mokkan refuses to point a status line there.
 
 - **Claude Code**: the command sets `statusLine` in `~/.claude/settings.json`, or in `$CLAUDE_CONFIG_DIR/settings.json` when that is set. All other settings stay as they are, and a backup `settings.json.mokkan-bak-<time>` is saved first. If you already have a status line that is not mokkan's, the command leaves it alone and shows how to combine the two. `--force` replaces it.
 - **tmux and Codex**: Codex's own footer can only show built-in items, so mokkan appears in the tmux status bar. The command adds a marked block to `~/.tmux.conf`, after a backup. To see it, reload with `tmux source-file ~/.tmux.conf` and run Codex inside tmux. If your tmux config sets its own `status-right` or loads plugins through TPM (themes set `status-right` too), mokkan leaves it alone and prints the `#(…)` part to add to your own `status-right`; `mokkan statusline --tmux --force` adds the block anyway, and the block then wins. Use `--tmux` or `--claude` to set up only one of the two.
@@ -122,7 +122,7 @@ Set it up from the plugin or from a global install (`npm install -g mokkan`), no
 Remove the status line first, because it runs mokkan: `/mokkan:mokkan statusline --remove` in Claude Code, or `mokkan statusline --remove` in a terminal. This takes mokkan out of `settings.json` and `~/.tmux.conf` (after backups) and deletes the copy in `~/.local/share/mokkan/`. Then:
 
 - Claude Code plugin: `/plugin uninstall mokkan@mokkan`.
-- npm: `npm uninstall -g mokkan`.
+- npm: `npm uninstall -g @vicmpen/mokkan-cli`.
 - Your login stays in `~/.config/mokkan/`; `mokkan logout` (or deleting that directory) removes it.
 
 ## Privacy

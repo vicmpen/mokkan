@@ -2,7 +2,7 @@
 # Exports the committed HEAD of this (private) repository into a separate public repository checkout,
 # leaving out internal material, and records it as one release commit there.
 #
-#   tools/export-public.sh <public-repo-dir>
+#   tools/export-public.sh <public-repo-dir> [commit message]   (default: "mokkan <version>")
 #
 # The first run creates <public-repo-dir> with a fresh history; later runs add one commit per release on top.
 # The commit is authored with the GitHub noreply address. Nothing is pushed.
@@ -42,5 +42,5 @@ if git -C "$DEST" diff --cached --quiet; then
 fi
 GIT_AUTHOR_NAME="$AUTHOR_NAME" GIT_AUTHOR_EMAIL="$AUTHOR_EMAIL" \
 GIT_COMMITTER_NAME="$AUTHOR_NAME" GIT_COMMITTER_EMAIL="$AUTHOR_EMAIL" \
-  git -C "$DEST" commit -q -m "mokkan $VERSION"
-echo "Exported $(git rev-parse --short HEAD) as \"mokkan $VERSION\" into $DEST ($(git -C "$DEST" rev-parse --short HEAD)). Not pushed."
+  git -C "$DEST" commit -q -m "${2:-mokkan $VERSION}"
+echo "Exported $(git rev-parse --short HEAD) as \"${2:-mokkan $VERSION}\" into $DEST ($(git -C "$DEST" rev-parse --short HEAD)). Not pushed."

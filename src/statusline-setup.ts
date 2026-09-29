@@ -136,12 +136,12 @@ export interface CliLocation {
   copied: boolean;
 }
 
-/** `npx mokkan statusline`: the CLI sits in npm's throwaway npx cache, which a status line must not point into. */
+/** `npx @vicmpen/mokkan-cli statusline`: the CLI sits in npm's throwaway npx cache, which a status line must not point into. */
 export class NpxCliError extends Error {
   constructor(file: string) {
     super(`mokkan is running from npx's temporary cache (${file}), which npm may delete at any time, so a status line `
       + 'must not point there. Run /mokkan:mokkan statusline in Claude Code (with the mokkan plugin), '
-      + 'or npm i -g mokkan first and then mokkan statusline.');
+      + 'or npm i -g @vicmpen/mokkan-cli first and then mokkan statusline.');
   }
 }
 
