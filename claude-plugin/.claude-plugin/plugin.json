@@ -1,0 +1,10 @@
+{
+  "name": "mokkan",
+  "version": "0.2.0",
+  "description": "Cross-session reminders: /mokkan:mokkan push|pop|dequeue|in|edit|ack|list, credits, and a status line. Hooks show due reminders when a session starts and after each turn.",
+  "author": { "name": "Victor Benetatos" },
+  "homepage": "https://github.com/vicmpen/mokkan#readme",
+  "repository": "https://github.com/vicmpen/mokkan",
+  "license": "MIT",
+  "keywords": ["reminders", "todo", "statusline", "productivity"]
+}

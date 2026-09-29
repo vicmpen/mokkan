@@ -1,0 +1,54 @@
+{
+  "name": "mokkan",
+  "version": "0.2.0",
+  "description": "Cross-session reminders for Claude Code, Codex and your terminal: a synced stack of notes, scheduled email reminders and a status line.",
+  "keywords": [
+    "reminders",
+    "todo",
+    "cli",
+    "claude-code",
+    "claude-code-plugin",
+    "codex",
+    "statusline",
+    "tmux"
+  ],
+  "homepage": "https://github.com/vicmpen/mokkan#readme",
+  "bugs": {
+    "url": "https://github.com/vicmpen/mokkan/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vicmpen/mokkan.git"
+  },
+  "license": "MIT",
+  "author": "Victor Benetatos",
+  "type": "module",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "bin": {
+    "mokkan": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "codex/",
+    "claude-command/",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "bundle": "node tools/bundle.mjs",
+    "check:bundle": "node tools/bundle.mjs --check",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && npm run typecheck && npm test && npm run check:bundle"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^5.6.0",
+    "vitest": "^5.0.2"
+  }
+}

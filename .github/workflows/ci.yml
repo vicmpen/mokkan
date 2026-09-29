@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# Actions are pinned to commit SHAs (the tag each one had when pinned is in the comment).
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Plugin bundle is up to date
+        run: npm run check:bundle
+      - run: npm run build
+      - name: npm package contents
+        run: npm pack --dry-run
+      - name: claude plugin validate
+        # Best effort: needs the Claude Code CLI from npm; the manifests are also checked by test/plugin.test.ts.
+        continue-on-error: true
+        run: |
+          npx -y @anthropic-ai/claude-code plugin validate --strict .
+          npx -y @anthropic-ai/claude-code plugin validate --strict claude-plugin
+
+  # engines.node is >=20.3.0: the built CLI and the plugin bundle must at least start there.
+  node20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20.x
+      - run: node --version
+      - name: Built CLI runs on Node 20
+        run: HOME="$RUNNER_TEMP" node dist/cli.js help
+      - name: Plugin bundle runs on Node 20
+        run: HOME="$RUNNER_TEMP" node claude-plugin/scripts/mokkan.mjs help

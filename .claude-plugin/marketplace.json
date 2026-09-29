@@ -1,0 +1,14 @@
+{
+  "name": "mokkan",
+  "owner": { "name": "Victor Benetatos" },
+  "metadata": {
+    "description": "mokkan: cross-session reminders for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "mokkan",
+      "source": "./claude-plugin",
+      "description": "Cross-session reminders synced through api.mokkan.dev, with hooks that surface due reminders and a status line."
+    }
+  ]
+}
