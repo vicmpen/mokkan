@@ -1,14 +1,12 @@
 import { cleanText, creditSegments, formatAge, formatWhen, DEFAULT_GRACE_MINUTES, type Tone } from '../statusline.js';
 import type { Reminder } from '../types.js';
-import { ACTIVE_STATES, rowsOf, type Size, type Tab, type TuiState } from './state.js';
+import { ACTIVE_STATES, CHROME_ROWS, rowsOf, type Size, type Tab, type TuiState } from './state.js';
 import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
 
 export type { Size };
 
 const MIN_COLUMNS = 20;
 const MIN_ROWS = 8;
-/** Header, tabs, rule, message and two footer lines. */
-const CHROME_ROWS = 6;
 /** Below this many columns for the text, a row drops its time column. */
 const MIN_TEXT_COLUMNS = 10;
 /** Width of the row prefix: marker, number, state. */
@@ -216,7 +214,12 @@ function footer(state: TuiState, columns: number): string[] {
     const { text } = inputWindow(blankControls(m.buffer), m.cursor, columns - displayWidth(label));
     return [line([part(label, 'bold'), part(text)], [], columns), line([part(` ${m.hint}`, 'dim')], [], columns)];
   }
-  if (m.kind === 'confirm') return [line([part(` ${clean(m.prompt)}`, 'yellow')], [], columns), ''];
+  if (m.kind === 'confirm') {
+    // The reminder is shortened, never `y/n`.
+    const verb = m.action === 'pop' ? 'Pop' : 'Dequeue';
+    const room = columns - displayWidth(` ${verb} ""? y/n`);
+    return [line([part(` ${verb} "${fit(clean(m.text), room)}"? y/n`, 'yellow')], [], columns), ''];
+  }
   return [
     line([part(' p push · i schedule · e edit · t time · a ack · A ack all', 'dim')], [], columns),
     line([part(' x pop · d dequeue · b buy · Tab view · r refresh · q quit · ↑↓ move', 'dim')], [], columns),

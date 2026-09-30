@@ -1,5 +1,6 @@
 // src/tui/text.ts
-const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+/** Created on first use, so commands that never draw the TUI (status line renders, hooks) do not pay for it. */
+let segmenter: Intl.Segmenter | undefined;
 
 /**
  * Best-effort two-column code points, sorted: East Asian wide ranges, the BMP code points with emoji presentation
@@ -26,6 +27,7 @@ function isWide(cp: number): boolean {
 }
 
 export function graphemes(text: string): string[] {
+  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
   return [...segmenter.segment(text)].map((s) => s.segment);
 }
 

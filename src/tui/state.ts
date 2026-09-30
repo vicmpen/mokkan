@@ -20,8 +20,11 @@ export interface InputMode {
   /** For edit and time: the list version when the input opened, sent as expected_version. */
   version?: number | null;
 }
-/** `version`: the list version when the prompt opened, sent as expected_version. */
-export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue'; prompt: string; version: number | null }
+/**
+ * `text`: the reminder's text as the server sent it (the renderer cleans and shortens it). `version`: the list
+ * version when the prompt opened, sent as expected_version.
+ */
+export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue'; text: string; version: number | null }
 export type Mode = { kind: 'normal' } | InputMode | ConfirmMode;
 
 export interface LoginState {
@@ -56,6 +59,9 @@ export interface TuiState {
   message: { text: string; tone: Tone } | null;
   mode: Mode;
 }
+
+/** Screen rows that are not list rows: header, tabs, rule, message and two footer lines. */
+export const CHROME_ROWS = 6;
 
 /** Longest text an input line or login field accepts, in code points (the server's limit for reminder text). */
 export const MAX_INPUT_CODE_POINTS = 2000;

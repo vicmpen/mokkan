@@ -1,7 +1,7 @@
 import { writeSync } from 'node:fs';
 import type { CliIO, TerminalIO } from '../cli.js';
-import { REFRESH_INTERVAL_MS, type TuiApp } from './app.js';
-import { KeyDecoder } from './keys.js';
+import { REFRESH_INTERVAL_MS, errorText, type TuiApp } from './app.js';
+import { KeyDecoder, type Key } from './keys.js';
 import { cursorPosition } from './screen.js';
 
 /** Alternate screen, home, clear, hidden cursor, bracketed paste on. */
@@ -27,6 +27,7 @@ export async function runTerminal(app: TuiApp, io: CliIO, tty: TerminalIO): Prom
   let flushTimer: NodeJS.Timeout | null = null;
   let left = false;
   const draw = (): void => {
+    if (pending !== null) clearTimeout(pending);
     pending = null;
     if (left) return;
     const size = tty.size();
@@ -42,10 +43,22 @@ export async function runTerminal(app: TuiApp, io: CliIO, tty: TerminalIO): Prom
     try { writeSync(1, LEAVE_SCREEN); } catch { /* stdout already gone */ }
   };
   const onSignal = (): void => { app.exitCode = 0; wake(); };
+  /** The app handles its own failures; anything that still escapes is shown rather than lost. */
+  const report = (err: unknown): void => {
+    app.state.message = { text: errorText(err), tone: 'red' };
+    scheduleDraw();
+  };
+  /** Keys after the one that quits are dropped: `qxy` typed in one burst must not pop. */
+  const dispatch = (keys: Key[]): void => {
+    for (const key of keys) {
+      if (app.exitCode !== null) return;
+      void app.handleKey(key).catch(report);
+    }
+  };
   const decoder = new KeyDecoder();
   const flush = (): void => {
     flushTimer = null;
-    for (const key of decoder.flush()) void app.handleKey(key);
+    dispatch(decoder.flush());
   };
 
   app.onChange = () => { scheduleDraw(); wake(); };
@@ -56,17 +69,18 @@ export async function runTerminal(app: TuiApp, io: CliIO, tty: TerminalIO): Prom
     io.stdout(ENTER_SCREEN);
     tty.setRawMode(true);
     unData = tty.onData((chunk) => {
-      for (const key of decoder.feed(chunk)) void app.handleKey(key);
+      dispatch(decoder.feed(chunk));
       if (flushTimer !== null) clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, ESC_FLUSH_MS);
     });
     unResize = tty.onResize(scheduleDraw);
     process.once('exit', restoreOnExit);
     process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
     process.once('SIGHUP', onSignal);
-    timer = setInterval(() => { void app.refresh(); }, REFRESH_INTERVAL_MS);
+    timer = setInterval(() => { void app.refresh().catch(report); }, REFRESH_INTERVAL_MS);
     draw();
-    void app.refresh();
+    void app.refresh().catch(report);
     wake();
     await finished;
   } finally {
@@ -79,9 +93,9 @@ export async function runTerminal(app: TuiApp, io: CliIO, tty: TerminalIO): Prom
     unResize();
     process.off('exit', restoreOnExit);
     process.off('SIGTERM', onSignal);
+    process.off('SIGINT', onSignal);
     process.off('SIGHUP', onSignal);
-    tty.setRawMode(false);
-    io.stdout(LEAVE_SCREEN);
+    try { tty.setRawMode(false); } finally { io.stdout(LEAVE_SCREEN); }
   }
   return app.exitCode ?? 0;
 }

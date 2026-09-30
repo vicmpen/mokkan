@@ -75,7 +75,7 @@ describe('TuiApp core', () => {
     expect(server.last('POST', '/heartbeat')?.body).toEqual({ source: 'ui' });
     expect(server.last('POST', '/reminders/deliver')?.body).toEqual({ ids: [ID2, ID1] });
     expect(app.rows().every((r) => r.state === 'delivered')).toBe(true);
-    // The fake bumps the version on delivery; the app adopts it so the next pop is not stale.
+    // The fake bumps the version on delivery; the app lists again and adopts it, so the next pop is not stale.
     expect(app.state.version).toBe(8);
     await app.refresh();
     expect(server.count('POST', '/reminders/deliver')).toBe(1);
@@ -143,6 +143,45 @@ describe('TuiApp core', () => {
     await pressed;
     expect(app.state.selected).toBe(1);
     expect(app.rows()[1].id).toBe(ID1);
+  });
+
+  it('lists again after delivering, so a change made in between is shown', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    let changed = false;
+    acct.afterList = () => {
+      if (changed) return;
+      changed = true; // another session pushes after our list was answered, before our deliver
+      acct.reminders.set(IDNEW, rem(IDNEW, 'from another session', 4));
+      acct.version += 1;
+    };
+    await app.refresh();
+    expect(server.count('POST', '/reminders/deliver')).toBe(1);
+    expect(app.rows().map((r) => r.id)).toEqual([IDNEW, ID2, ID1]);
+    expect(app.state.version).toBe(acct.version);
+  });
+
+  it('does not deliver while the Done tab is shown', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await type(app, '\t\t');
+    expect(app.state.tab).toBe('done');
+    await app.refresh();
+    expect(server.count('POST', '/reminders/deliver')).toBe(0);
+    await type(app, '\t');
+    await app.refresh();
+    expect(server.count('POST', '/reminders/deliver')).toBe(1);
+  });
+
+  it('shares a refresh that is already queued or running', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    const first = app.refresh();
+    expect(app.refresh()).toBe(first);
+    await first;
+    expect(server.count('POST', '/heartbeat')).toBe(1);
+    await app.refresh();
+    expect(server.count('POST', '/heartbeat')).toBe(2);
   });
 
   it('keeps the last list and reports offline when the server goes away', async () => {
@@ -354,7 +393,7 @@ describe('TuiApp actions', () => {
     expect(app.state.mode).toEqual({ kind: 'normal' });
     expect(server.count('POST', '/reminders/pop')).toBe(0);
     await type(app, 'x');
-    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n', version: 8 });
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', text: 'second', version: 8 });
     await type(app, 'y');
     expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 8 });
     expect(acct.reminders.get(ID2)?.state).toBe('done');
@@ -367,7 +406,7 @@ describe('TuiApp actions', () => {
     const app = makeApp(server, h);
     await app.refresh();
     await type(app, 'd');
-    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', prompt: 'Dequeue "first"? y/n', version: 8 });
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', text: 'first', version: 8 });
     await type(app, 'y');
     expect(server.last('POST', '/reminders/dequeue')?.body).toEqual({ expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'Dequeued [aaaa1111] first', tone: 'green' });
@@ -389,7 +428,7 @@ describe('TuiApp actions', () => {
     const app = makeApp(server, h);
     await app.refresh();
     await type(app, 'x');
-    expect(app.state.mode).toMatchObject({ kind: 'confirm', prompt: 'Pop "second"? y/n' });
+    expect(app.state.mode).toMatchObject({ kind: 'confirm', text: 'second' });
     acct.reminders.set(IDNEW, rem(IDNEW, 'from another session', 4)); // another session pushes onto the top
     acct.version += 1;
     await app.refresh();
@@ -415,6 +454,8 @@ describe('TuiApp actions', () => {
     expect(server.last('PATCH', `/reminders/${ID2}`)?.body).toEqual({ text: 'second draft', expected_version: 8 });
     expect(acct.reminders.get(ID2)?.text).toBe('changed elsewhere');
     expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
+    // The typed text comes back, now with the version just fetched, so Enter retries against the fresh list.
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'edit', buffer: 'second draft', cursor: 12, targetId: ID2, version: 9 });
   });
 
   it('acknowledges the selected reminder and all of them', async () => {

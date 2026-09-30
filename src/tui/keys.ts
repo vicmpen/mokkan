@@ -44,9 +44,11 @@ export class KeyDecoder {
 
   /**
    * Decodes the held-back tail as if the input ended there: a lone ESC is `escape`, an incomplete sequence is
-   * dropped.
+   * dropped. Inside a paste nothing changes (a paste never holds a real Esc press), so an end marker split across
+   * chunks still ends it.
    */
   flush(): Key[] {
+    if (this.paste !== null) return [];
     const rest = this.pending;
     this.pending = '';
     return this.decode(rest);

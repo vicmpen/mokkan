@@ -5,18 +5,16 @@ import { parseDuration } from '../duration.js';
 import { SessionExpiredError } from '../errors.js';
 import { formatRelative, shortId } from '../format.js';
 import { cleanText } from '../statusline.js';
-import type { CheckoutResponse, DeliverResponse, Reminder } from '../types.js';
+import type { CheckoutResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';
 import {
-  initialState, rowsOf, emptyLogin, ACTIVE_STATES, MAX_INPUT_CODE_POINTS,
+  initialState, rowsOf, emptyLogin, ACTIVE_STATES, CHROME_ROWS, MAX_INPUT_CODE_POINTS,
   type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tab, type Tone, type TuiState,
 } from './state.js';
 
 export const REFRESH_INTERVAL_MS = 10_000;
 const TABS: Tab[] = ['active', 'all', 'done'];
-/** Header, tabs, rule, message and two footer lines. */
-const CHROME_ROWS = 6;
 
 export interface TuiAppOptions {
   client: MokkanClient;
@@ -31,6 +29,9 @@ export interface TuiAppOptions {
 export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+/** The server refused a change made against an older list version. */
+const isStale = (err: unknown): boolean => err instanceof ApiError && err.status === 409 && err.code === 'stale';
 
 /**
  * Applies an editing key to a one-line buffer (cursor in code points). Returns false for keys it does not handle.
@@ -74,6 +75,8 @@ export class TuiApp {
   onChange: () => void = () => undefined;
   private size: Size = { columns: 80, rows: 24 };
   private queue: Promise<void> = Promise.resolve();
+  /** The refresh that is queued or running; asking for another one joins it. */
+  private pendingRefresh: Promise<void> | null = null;
   /** Ids already sent to /reminders/deliver, so a slow server never gets them twice. */
   private readonly delivered = new Set<string>();
   private readonly client: MokkanClient;
@@ -96,7 +99,10 @@ export class TuiApp {
 
   render(size: Size, now: Date): string[] { return renderScreen(this.state, size, now); }
 
-  refresh(): Promise<void> { return this.enqueue(() => this.doRefresh()); }
+  refresh(): Promise<void> {
+    this.pendingRefresh ??= this.enqueue(() => this.doRefresh()).finally(() => { this.pendingRefresh = null; });
+    return this.pendingRefresh;
+  }
 
   handleKey(key: Key): Promise<void> {
     const s = this.state;
@@ -291,7 +297,7 @@ export class TuiApp {
         return this.action(async () => {
           const res = await this.client.editReminder(mode.targetId!, { text }, mode.version ?? undefined);
           this.say(`Edited [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
-        });
+        }, mode);
       case 'time': {
         let dueAt: Date | null = null;
         if (text !== 'clear') {
@@ -306,7 +312,7 @@ export class TuiApp {
           const r = res.reminder;
           const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : '(time cleared)';
           this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, 'green');
-        });
+        }, mode);
       }
     }
   }
@@ -321,8 +327,11 @@ export class TuiApp {
     }
   }
 
-  /** Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`. */
-  private action(work: () => Promise<void>): Promise<void> {
+  /**
+   * Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`.
+   * `reopen`: the edit or time input to bring back, typed text and all, when the list changed under it.
+   */
+  private action(work: () => Promise<void>, reopen?: InputMode): Promise<void> {
     this.state.mode = { kind: 'normal' };
     this.changed();
     return this.enqueue(async () => {
@@ -330,6 +339,12 @@ export class TuiApp {
         await work();
       } catch (err) {
         await this.fail(err);
+        const s = this.state;
+        // fail() has refreshed; the retry is sent against the version just fetched.
+        if (reopen && isStale(err) && s.screen === 'dashboard' && s.mode.kind === 'normal') {
+          s.mode = { ...reopen, version: s.version };
+          this.changed();
+        }
         return;
       }
       await this.doRefresh();
@@ -341,7 +356,7 @@ export class TuiApp {
     const target = action === 'pop' ? list[0] : list[list.length - 1];
     if (!target) { this.say('List is empty.'); return Promise.resolve(); }
     this.state.message = null;
-    this.state.mode = { kind: 'confirm', action, prompt: `${action === 'pop' ? 'Pop' : 'Dequeue'} "${target.text}"? y/n`, version: this.state.version };
+    this.state.mode = { kind: 'confirm', action, text: target.text, version: this.state.version };
     this.changed();
     return Promise.resolve();
   }
@@ -430,12 +445,14 @@ export class TuiApp {
     s.refreshing = true;
     this.changed();
     try {
-      const [list, me, , done] = await Promise.all([
+      const [first, me, , done] = await Promise.all([
         this.client.list('all'),
         this.client.me().catch(() => null),
         this.client.heartbeat('ui').catch(() => null),
         s.tab === 'done' ? this.client.list('done') : null,
       ]);
+      // Delivery changes the list and its version, and another session may have changed it since: list again.
+      const list = await this.deliverDue(first.reminders) ? await this.client.list('all') : first;
       // No await from here to the selection restore, so keys pressed while the requests ran are kept.
       const keep = this.rows()[s.selected]?.id;
       s.reminders = list.reminders;
@@ -447,7 +464,6 @@ export class TuiApp {
       const idx = keep === undefined ? -1 : this.rows().findIndex((r) => r.id === keep);
       if (idx !== -1) s.selected = idx;
       this.clampSelection();
-      await this.deliverDue();
     } catch (err) {
       if (this.sessionLost(err)) { this.toLogin('Session expired, log in again.'); return; }
       s.error = err instanceof NetworkError
@@ -459,26 +475,23 @@ export class TuiApp {
     }
   }
 
-  /** Reminders shown here count as shown: due ones are marked delivered, like the hooks and `mokkan watch` do. */
-  private async deliverDue(): Promise<void> {
-    const s = this.state;
-    const ids = s.reminders.filter((r) => r.state === 'due' && !this.delivered.has(r.id)).map((r) => r.id);
-    if (ids.length === 0) return;
+  /**
+   * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
+   * `mokkan watch` do. Not on the Done tab, which does not show them. Returns whether the server took the call.
+   */
+  private async deliverDue(reminders: Reminder[]): Promise<boolean> {
+    if (this.state.tab === 'done') return false;
+    const ids = reminders.filter((r) => r.state === 'due' && !this.delivered.has(r.id)).map((r) => r.id);
+    if (ids.length === 0) return false;
     for (const id of ids) this.delivered.add(id);
-    let res: DeliverResponse;
     try {
-      res = await this.client.deliver(ids);
+      await this.client.deliver(ids);
     } catch (err) {
       if (this.sessionLost(err)) throw err;
       for (const id of ids) this.delivered.delete(id); // try again on the next refresh
-      return;
+      return false;
     }
-    s.version = res.version;
-    const at = this.now().toISOString();
-    for (const id of res.delivered) {
-      const r = s.reminders.find((x) => x.id === id);
-      if (r) { r.state = 'delivered'; r.delivered_at = at; }
-    }
+    return true;
   }
 
   private sessionLost(err: unknown): boolean {
@@ -503,7 +516,7 @@ export class TuiApp {
     if (this.sessionLost(err)) { this.toLogin('Session expired, log in again.'); return; }
     if (err instanceof NetworkError) { this.say(`Server unreachable: ${err.message}`, 'red'); return; }
     if (err instanceof ApiError) {
-      if (err.status === 409 && err.code === 'stale') {
+      if (isStale(err)) {
         await this.doRefresh();
         this.say('The list changed, try again.', 'yellow');
         return;

@@ -64,6 +64,13 @@ describe('decodeKeys', () => {
     expect(d.feed('A')).toEqual([{ name: 'up' }]);
   });
 
+  it('keeps a paste open through flush, so a split end marker still ends it', () => {
+    const d = new KeyDecoder();
+    expect(d.feed(`${PASTE_START}abc\x1b[20`)).toEqual([]);
+    expect(d.flush()).toEqual([]);
+    expect(d.feed('1~\x03')).toEqual([paste('abc'), { name: 'ctrl-c' }]);
+  });
+
   it('holds a trailing lone ESC until flush', () => {
     const d = new KeyDecoder();
     expect(d.feed('x\x1b')).toEqual([ch('x')]);

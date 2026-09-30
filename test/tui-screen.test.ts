@@ -129,10 +129,22 @@ describe('render: dashboard', () => {
     expect(lines[22].trimEnd()).toBe(' push › call');
     expect(lines[23].trimEnd()).toBe(' Enter to push (1 credit) · Esc to cancel');
     expect(cursorPosition(input, SIZE)).toEqual({ row: 23, column: 13 });
-    const confirm = dashboard({ mode: { kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n', version: 3 } });
+    const confirm = dashboard({ mode: { kind: 'confirm', action: 'pop', text: 'second', version: 3 } });
     const c = plain(render(confirm, SIZE, NOW));
     expect(c[22].trimEnd()).toBe(' Pop "second"? y/n');
     expect(c[23]).toBe('');
+  });
+
+  it('shortens the reminder in the confirm prompt so y/n stays visible', () => {
+    const long = dashboard({ mode: { kind: 'confirm', action: 'dequeue', text: `${'long '.repeat(30)}\x1b[2J`, version: 3 } });
+    const raw = render(long, SIZE, NOW);
+    const l = strip(raw[22]);
+    expect(l.startsWith(' Dequeue "long long')).toBe(true);
+    expect(l.endsWith('…"? y/n')).toBe(true);
+    expect(displayWidth(l)).toBe(79);
+    const narrow = strip(render(dashboard({ mode: { kind: 'confirm', action: 'pop', text: 'x'.repeat(50), version: 3 } }), { columns: 30, rows: 24 }, NOW)[22]);
+    expect(narrow).toBe(` Pop "${'x'.repeat(16)}…"? y/n`); // 29 drawn columns
+    expect(displayWidth(narrow)).toBe(29);
   });
 
   it('blanks control characters in the input buffer without moving the cursor', () => {

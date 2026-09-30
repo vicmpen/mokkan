@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ENTER_SCREEN, LEAVE_SCREEN } from '../src/tui/terminal.js';
-import { CliHarness, FakeTerminal } from './cli-harness.js';
+import type { CliIO } from '../src/cli.js';
+import { MokkanClient } from '../src/client.js';
+import { TuiApp } from '../src/tui/app.js';
+import type { Key } from '../src/tui/keys.js';
+import { ENTER_SCREEN, LEAVE_SCREEN, runTerminal } from '../src/tui/terminal.js';
+import { CliHarness, FakeTerminal, NOW } from './cli-harness.js';
 import { FakeServer } from './fake-server.js';
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
@@ -51,6 +55,59 @@ describe('mokkan ui', () => {
     expect(strip(res.stdout)).toContain(' Log in');
     expect(strip(res.stdout)).toContain('not logged in');
     expect(server.requests).toHaveLength(0);
+  });
+
+  describe('driver', () => {
+    const ID = 'aaaa1111-0000-0000-0000-000000000000';
+    let out: string;
+    const io: CliIO = {
+      stdout: (t) => { out += t; }, stderr: () => undefined, env: {}, isTTY: true,
+      prompt: async () => '', readStdin: async () => '', now: () => NOW, sleep: async () => undefined,
+    };
+    /** A logged-in app with one reminder on screen. */
+    async function loadedApp(make: (client: MokkanClient) => TuiApp = (client) => new TuiApp({ client, email: 'a@example.com', host: 'test', now: () => NOW })): Promise<TuiApp> {
+      out = '';
+      const acct = server.withAccount();
+      acct.reminders.set(ID, { id: ID, text: 'first', state: 'due', position: 1, due_at: null, created_at: NOW.toISOString(), delivered_at: null, acknowledged_at: null, done_at: null });
+      const app = make(new MokkanClient({ baseUrl: server.url, credentials: h.saveCreds(server.url), now: () => NOW }));
+      await app.refresh();
+      expect(app.rows()).toHaveLength(1);
+      return app;
+    }
+
+    it('stops dispatching keys once one quits: q, x, y in one chunk pops nothing', async () => {
+      const app = await loadedApp();
+      const tty = new FakeTerminal();
+      tty.type('qxy');
+      expect(await runTerminal(app, io, tty)).toBe(0);
+      await app.refresh(); // waits for anything the keys queued
+      expect(server.count('POST', '/reminders/pop')).toBe(0);
+      expect(app.state.mode).toEqual({ kind: 'normal' });
+    });
+
+    it('shows a failure that escapes a key handler on the message line', async () => {
+      class Failing extends TuiApp {
+        override handleKey(key: Key): Promise<void> {
+          return key.name === 'char' && key.ch === 'z' ? Promise.reject(new Error('boom')) : super.handleKey(key);
+        }
+      }
+      const app = await loadedApp((client) => new Failing({ client, email: 'a@example.com', host: 'test', now: () => NOW }));
+      const tty = new FakeTerminal();
+      tty.type('zq');
+      expect(await runTerminal(app, io, tty)).toBe(0);
+      expect(app.state.message).toEqual({ text: 'boom', tone: 'red' });
+    });
+
+    it('leaves the alternate screen even when raw mode cannot be turned off', async () => {
+      const app = await loadedApp();
+      class Broken extends FakeTerminal {
+        override setRawMode(on: boolean): void { if (!on) throw new Error('stdin is gone'); super.setRawMode(on); }
+      }
+      const tty = new Broken();
+      tty.type('q');
+      await expect(runTerminal(app, io, tty)).rejects.toThrow('stdin is gone');
+      expect(out.endsWith(LEAVE_SCREEN)).toBe(true);
+    });
   });
 
   it('lists ui in the usage', async () => {
