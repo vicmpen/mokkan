@@ -109,12 +109,12 @@ export class TuiApp {
       if (!r) return Promise.resolve();
       // Control characters from the server never reach the input line; Enter without changes stays "Unchanged."
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (counts as one edit) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text });
+      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (counts as one edit) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
     if (ch === 't') {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" · Enter to save (counts as one edit) · Esc to cancel', { targetId: r.id });
+      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" · Enter to save (counts as one edit) · Esc to cancel', { targetId: r.id, version: this.state.version });
     }
     if (ch === 'a') return this.ackSelected();
     if (ch === 'A') return this.ackAll();
@@ -251,7 +251,6 @@ export class TuiApp {
     const s = this.state;
     const text = mode.buffer.trim();
     if (text === '') { s.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
-    const version = s.version ?? undefined;
     switch (mode.purpose) {
       case 'push':
         return this.action(async () => {
@@ -276,7 +275,7 @@ export class TuiApp {
       case 'edit':
         if (text === mode.originalText) { s.mode = { kind: 'normal' }; this.say('Unchanged.', 'dim'); return Promise.resolve(); }
         return this.action(async () => {
-          const res = await this.client.editReminder(mode.targetId!, { text }, version);
+          const res = await this.client.editReminder(mode.targetId!, { text }, mode.version ?? undefined);
           this.say(`Edited [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
         });
       case 'time': {
@@ -289,7 +288,7 @@ export class TuiApp {
         }
         const now = this.now();
         return this.action(async () => {
-          const res = await this.client.editReminder(mode.targetId!, { due_at: dueAt }, version);
+          const res = await this.client.editReminder(mode.targetId!, { due_at: dueAt }, mode.version ?? undefined);
           const r = res.reminder;
           const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : '(time cleared)';
           this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, 'green');
@@ -328,7 +327,7 @@ export class TuiApp {
     const target = action === 'pop' ? list[0] : list[list.length - 1];
     if (!target) { this.say('List is empty.'); return Promise.resolve(); }
     this.state.message = null;
-    this.state.mode = { kind: 'confirm', action, prompt: `${action === 'pop' ? 'Pop' : 'Dequeue'} "${target.text}"? y/n` };
+    this.state.mode = { kind: 'confirm', action, prompt: `${action === 'pop' ? 'Pop' : 'Dequeue'} "${target.text}"? y/n`, version: this.state.version };
     this.changed();
     return Promise.resolve();
   }
@@ -336,7 +335,7 @@ export class TuiApp {
   private confirmKey(mode: ConfirmMode, key: Key): Promise<void> {
     if (key.name === 'ctrl-c') return this.quit();
     if (key.name !== 'char' || key.ch !== 'y') { this.state.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
-    const version = this.state.version ?? undefined;
+    const version = mode.version ?? undefined;
     return this.action(async () => {
       const res = mode.action === 'pop' ? await this.client.pop(version) : await this.client.dequeue(version);
       this.say(`${mode.action === 'pop' ? 'Popped' : 'Dequeued'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');

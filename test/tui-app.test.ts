@@ -302,7 +302,7 @@ describe('TuiApp actions', () => {
     expect(app.state.mode).toEqual({ kind: 'normal' });
     expect(server.count('POST', '/reminders/pop')).toBe(0);
     await type(app, 'x');
-    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n' });
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n', version: 8 });
     await type(app, 'y');
     expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 8 });
     expect(acct.reminders.get(ID2)?.state).toBe('done');
@@ -315,7 +315,7 @@ describe('TuiApp actions', () => {
     const app = makeApp(server, h);
     await app.refresh();
     await type(app, 'd');
-    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', prompt: 'Dequeue "first"? y/n' });
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', prompt: 'Dequeue "first"? y/n', version: 8 });
     await type(app, 'y');
     expect(server.last('POST', '/reminders/dequeue')?.body).toEqual({ expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'Dequeued [aaaa1111] first', tone: 'green' });
@@ -330,6 +330,39 @@ describe('TuiApp actions', () => {
     expect(acct.reminders.get(ID2)?.state).toBe('delivered');
     expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
     expect(app.state.version).toBe(9);
+  });
+
+  it('pops nothing when the list changed while the prompt was open', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'x');
+    expect(app.state.mode).toMatchObject({ kind: 'confirm', prompt: 'Pop "second"? y/n' });
+    acct.reminders.set(IDNEW, rem(IDNEW, 'from another session', 4)); // another session pushes onto the top
+    acct.version += 1;
+    await app.refresh();
+    expect(app.state.mode.kind).toBe('confirm');
+    await type(app, 'y');
+    expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 8 });
+    expect(acct.reminders.get(ID2)?.state).not.toBe('done');
+    expect(acct.reminders.get(IDNEW)?.state).not.toBe('done');
+    expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+  });
+
+  it('does not overwrite a text change made while editing', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'e');
+    expect(app.state.mode).toMatchObject({ purpose: 'edit', buffer: 'second' });
+    acct.reminders.get(ID2)!.text = 'changed elsewhere'; // another session edits it
+    acct.version += 1;
+    await app.refresh();
+    await type(app, ' draft\r');
+    expect(server.last('PATCH', `/reminders/${ID2}`)?.body).toEqual({ text: 'second draft', expected_version: 8 });
+    expect(acct.reminders.get(ID2)?.text).toBe('changed elsewhere');
+    expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
   });
 
   it('acknowledges the selected reminder and all of them', async () => {

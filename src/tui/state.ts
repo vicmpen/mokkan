@@ -17,8 +17,11 @@ export interface InputMode {
   cursor: number;
   targetId?: string;
   originalText?: string;
+  /** For edit and time: the list version when the input opened, sent as expected_version. */
+  version?: number | null;
 }
-export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue'; prompt: string }
+/** `version`: the list version when the prompt opened, sent as expected_version. */
+export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue'; prompt: string; version: number | null }
 export type Mode = { kind: 'normal' } | InputMode | ConfirmMode;
 
 export interface LoginState {
