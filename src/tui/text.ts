@@ -30,7 +30,7 @@ export function graphemes(text: string): string[] {
 }
 
 /** A grapheme is two columns when it holds a wide code point or an emoji presentation selector (U+FE0F). */
-function graphemeWidth(g: string): number {
+export function graphemeWidth(g: string): number {
   if (g.includes('\uFE0F')) return 2;
   for (const c of g) if (isWide(c.codePointAt(0)!)) return 2;
   return 1;

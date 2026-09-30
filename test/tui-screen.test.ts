@@ -190,4 +190,14 @@ describe('inputWindow', () => {
     expect(inputWindow('abcdefgh', 0, 5)).toEqual({ text: 'abcde', cursorColumn: 0 });
     expect(inputWindow('ab', 1, 10)).toEqual({ text: 'ab', cursorColumn: 1 });
   });
+
+  it('windows a 2000-character buffer', () => {
+    const long = 'x'.repeat(1000) + '日'.repeat(1000);
+    for (const cursor of [0, 999, 1000, 1500, 2000]) {
+      const { text, cursorColumn } = inputWindow(long, cursor, 60);
+      expect(cursorColumn).toBeLessThanOrEqual(59);
+      expect(displayWidth(text)).toBeLessThanOrEqual(60);
+    }
+    expect(inputWindow(long, 2000, 60)).toEqual({ text: '日'.repeat(29), cursorColumn: 58 });
+  });
 });

@@ -9,7 +9,7 @@ import type { CheckoutResponse, DeliverResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';
 import {
-  initialState, rowsOf, emptyLogin, ACTIVE_STATES,
+  initialState, rowsOf, emptyLogin, ACTIVE_STATES, MAX_INPUT_CODE_POINTS,
   type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tab, type Tone, type TuiState,
 } from './state.js';
 
@@ -24,16 +24,21 @@ export interface TuiAppOptions {
   email: string | null;
   host: string;
   now: () => Date;
-  openUrl?: (url: string) => void;
+  /** Returns whether a browser was started. */
+  openUrl?: (url: string) => boolean;
 }
 
 export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Applies an editing key to a one-line buffer (cursor in code points). Returns false for keys it does not handle. */
+/**
+ * Applies an editing key to a one-line buffer (cursor in code points). Returns false for keys it does not handle.
+ * The buffer never grows past `MAX_INPUT_CODE_POINTS`: a character or the part of a paste beyond it is dropped.
+ */
 export function editLine(line: { buffer: string; cursor: number }, key: Key): boolean {
   const chars = [...line.buffer];
+  const room = Math.max(0, MAX_INPUT_CODE_POINTS - chars.length);
   switch (key.name) {
     case 'left': line.cursor = Math.max(0, line.cursor - 1); break;
     case 'right': line.cursor = Math.min(chars.length, line.cursor + 1); break;
@@ -42,9 +47,11 @@ export function editLine(line: { buffer: string; cursor: number }, key: Key): bo
     case 'backspace': if (line.cursor > 0) { chars.splice(line.cursor - 1, 1); line.cursor -= 1; } break;
     case 'delete': chars.splice(line.cursor, 1); break;
     case 'ctrl-u': chars.length = 0; line.cursor = 0; break;
-    case 'char': chars.splice(line.cursor, 0, key.ch); line.cursor += 1; break;
+    case 'char': if (room > 0) { chars.splice(line.cursor, 0, key.ch); line.cursor += 1; } break;
     case 'paste': {
-      const added = [...key.text];
+      // Only what fits is taken from the paste, one code point at a time, so a huge paste is never split whole.
+      const added: string[] = [];
+      for (const c of key.text) { if (added.length >= room) break; added.push(c); }
       chars.splice(line.cursor, 0, ...added);
       line.cursor += added.length;
       break;
@@ -71,7 +78,7 @@ export class TuiApp {
   private readonly delivered = new Set<string>();
   private readonly client: MokkanClient;
   private readonly now: () => Date;
-  private readonly openUrl: ((url: string) => void) | undefined;
+  private readonly openUrl: ((url: string) => boolean) | undefined;
 
   constructor(opts: TuiAppOptions) {
     this.client = opts.client;
@@ -366,7 +373,10 @@ export class TuiApp {
     });
   }
 
-  /** Same rules as `mokkan buy`: only a Stripe Checkout address is opened; the link is always shown. */
+  /**
+   * Same rules as `mokkan buy`: only a Stripe Checkout address is opened. The link does not fit the message line,
+   * so when it cannot be opened the message points to `mokkan buy --no-open`, which prints it.
+   */
   private buy(): Promise<void> {
     return this.action(async () => {
       let res: CheckoutResponse;
@@ -376,12 +386,15 @@ export class TuiApp {
         if (err instanceof ApiError && err.status === 404) { this.say('Billing is not enabled on this server.', 'red'); return; }
         throw err;
       }
-      let how = '· open it in your browser';
-      if (!isTrustedCheckoutUrl(res.url)) how = '· not opened: not a Stripe Checkout address';
-      else if (this.openUrl) {
-        try { this.openUrl(res.url); how = '· opening in your browser'; } catch { /* the link is shown anyway */ }
+      if (!isTrustedCheckoutUrl(res.url)) {
+        this.say('The server sent a checkout link that is not a Stripe address. Run: mokkan buy --no-open to see it.');
+        return;
       }
-      this.say(`Checkout: ${res.url} ${how} When the payment completes, the balance updates on the next refresh.`);
+      let opened = false;
+      try { opened = this.openUrl?.(res.url) ?? false; } catch { /* no opener: reported below */ }
+      this.say(opened
+        ? 'Opened Stripe Checkout in your browser. When the payment completes, the balance updates on the next refresh.'
+        : 'Could not open a browser here. Run: mokkan buy --no-open (it prints the link).');
     });
   }
 

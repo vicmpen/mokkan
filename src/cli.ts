@@ -48,8 +48,11 @@ export interface CliIO {
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
   /** Starts the detached status line refresher (tests replace it). */
   spawnRefresh?: () => void;
-  /** Opens a URL in the user's browser, best effort (tests replace it so no browser ever starts). */
-  openUrl?: (url: string) => void;
+  /**
+   * Opens a URL in the user's browser, best effort; returns whether an opener started (tests replace it so no
+   * browser ever starts).
+   */
+  openUrl?: (url: string) => boolean;
   /** The running CLI file and node binary written into status line configs (default process.argv[1], process.execPath). */
   cliPath?: string;
   nodePath?: string;

@@ -81,7 +81,7 @@ export class CliHarness {
       now: () => opts.now ?? NOW,
       sleep: async () => undefined,
       spawnRefresh: opts.spawnRefresh,
-      openUrl: (url) => { opts.opened?.push(url); },
+      openUrl: (url) => { opts.opened?.push(url); return true; },
       cliPath: opts.cliPath ?? this.fakeCli(),
       nodePath: opts.nodePath ?? '/usr/bin/node',
       tty: opts.tty,

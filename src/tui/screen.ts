@@ -1,7 +1,7 @@
 import { cleanText, creditSegments, formatAge, formatWhen, DEFAULT_GRACE_MINUTES, type Tone } from '../statusline.js';
 import type { Reminder } from '../types.js';
 import { ACTIVE_STATES, rowsOf, type Size, type Tab, type TuiState } from './state.js';
-import { displayWidth, fit, padEnd, padStart } from './text.js';
+import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
 
 export type { Size };
 
@@ -70,15 +70,23 @@ function line(left: Part[], right: Part[], columns: number, opts: { minLeft?: nu
   return paintParts(l, extra) + (opts.rowStyle ? paint(gap, opts.rowStyle) : gap) + paintParts(r, extra);
 }
 
-/** The part of a one-line buffer that fits `width` columns with the cursor visible, and the cursor's column in it. */
+/**
+ * The part of a one-line buffer that fits `width` columns with the cursor visible, and the cursor's column in it.
+ * Linear in the buffer: grapheme widths are measured once and the window slides over their prefix sums. A cursor
+ * inside a grapheme (in code points) stands after it.
+ */
 export function inputWindow(buffer: string, cursor: number, width: number): { text: string; cursorColumn: number } {
-  const chars = [...buffer];
-  const w = (from: number, to: number): number => displayWidth(chars.slice(from, to).join(''));
+  const gs = graphemes(buffer);
+  /** before[i]: columns taken by the graphemes ahead of grapheme i. */
+  const before = [0];
+  for (const g of gs) before.push(before[before.length - 1] + graphemeWidth(g));
+  let at = 0; // the grapheme the cursor stands before
+  for (let seen = 0; at < gs.length && seen < cursor; at++) seen += [...gs[at]].length;
   let start = 0;
-  while (start < cursor && w(start, cursor) >= width) start++;
-  let end = cursor;
-  while (end < chars.length && w(start, end + 1) <= width) end++;
-  return { text: chars.slice(start, end).join(''), cursorColumn: w(start, cursor) };
+  while (start < at && before[at] - before[start] >= width) start++;
+  let end = at;
+  while (end < gs.length && before[end + 1] - before[start] <= width) end++;
+  return { text: gs.slice(start, end).join(''), cursorColumn: before[at] - before[start] };
 }
 
 /**

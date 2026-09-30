@@ -57,6 +57,9 @@ export interface TuiState {
   mode: Mode;
 }
 
+/** Longest text an input line or login field accepts, in code points (the server's limit for reminder text). */
+export const MAX_INPUT_CODE_POINTS = 2000;
+
 /** The states `mokkan list` shows; `all` adds `scheduled`. */
 export const ACTIVE_STATES: ReadonlySet<string> = new Set(['due', 'delivered', 'acknowledged']);
 

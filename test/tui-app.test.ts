@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MokkanClient } from '../src/client.js';
 import { clearCredentials, credentialsPath, saveCredentials } from '../src/credentials.js';
 import { TuiApp } from '../src/tui/app.js';
+import { MAX_INPUT_CODE_POINTS } from '../src/tui/state.js';
 import { decodeKeys, PASTE_END, PASTE_START } from '../src/tui/keys.js';
 import { CliHarness, NOW } from './cli-harness.js';
 import { FakeServer, tokenPair, type FakeAccount } from './fake-server.js';
@@ -27,7 +28,13 @@ export function seed(server: FakeServer, balance = 100): FakeAccount {
   return acct;
 }
 
-export interface AppOptions { loggedIn?: boolean; accessExpiresAt?: string; opened?: string[] }
+export interface AppOptions {
+  loggedIn?: boolean;
+  accessExpiresAt?: string;
+  opened?: string[];
+  /** Replaces the default opener, which records the URL in `opened` and reports that a browser started. */
+  openUrl?: (url: string) => boolean;
+}
 
 export function makeApp(server: FakeServer, h: CliHarness, opts: AppOptions = {}): TuiApp {
   const creds = opts.loggedIn === false ? null : h.saveCreds(server.url, opts.accessExpiresAt);
@@ -38,7 +45,7 @@ export function makeApp(server: FakeServer, h: CliHarness, opts: AppOptions = {}
   });
   const app = new TuiApp({
     client, email: creds?.email ?? null, host: new URL(server.url).host, now: () => NOW,
-    openUrl: (url) => { opts.opened?.push(url); },
+    openUrl: opts.openUrl ?? ((url) => { opts.opened?.push(url); return true; }),
   });
   app.setSize({ columns: 80, rows: 24 });
   return app;
@@ -223,6 +230,19 @@ describe('TuiApp actions', () => {
     await type(app, `${PASTE_START}x🚀\r\ny${PASTE_END}`);
     expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', buffer: 'ax🚀 yc', cursor: 5 });
     expect(server.count('POST', '/reminders')).toBe(0);
+  });
+
+  it('caps the input line at 2000 code points, keeping the text after the cursor', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    expect(MAX_INPUT_CODE_POINTS).toBe(2000);
+    await type(app, 'pab\x1b[D');
+    await type(app, `${PASTE_START}${'x'.repeat(2500)}${PASTE_END}`);
+    const capped = { buffer: `a${'x'.repeat(1998)}b`, cursor: 1999 };
+    expect(app.state.mode).toMatchObject(capped);
+    await type(app, 'y');
+    expect(app.state.mode).toMatchObject(capped);
   });
 
   it('ignores a paste in normal mode', async () => {
@@ -433,7 +453,7 @@ describe('TuiApp actions', () => {
     expect(app.rows()[0].text).toBe('hello');
   });
 
-  it('opens a trusted checkout link, shows an untrusted one without opening, and reports missing billing', async () => {
+  it('opens a trusted checkout link, refuses an untrusted one, and reports missing billing', async () => {
     seed(server);
     const opened: string[] = [];
     const app = makeApp(server, h, { opened });
@@ -442,16 +462,31 @@ describe('TuiApp actions', () => {
     expect(server.count('POST', '/billing/checkout')).toBe(1);
     expect(opened).toEqual(['https://checkout.stripe.com/c/pay/cs_test_fake']);
     expect(app.state.message).toEqual({
-      text: 'Checkout: https://checkout.stripe.com/c/pay/cs_test_fake · opening in your browser When the payment completes, the balance updates on the next refresh.',
+      text: 'Opened Stripe Checkout in your browser. When the payment completes, the balance updates on the next refresh.',
       tone: 'plain',
     });
     server.withAccount({ checkoutUrl: 'https://evil.example/pay' });
     await type(app, 'b');
     expect(opened).toHaveLength(1);
-    expect(app.state.message?.text).toContain('Checkout: https://evil.example/pay · not opened: not a Stripe Checkout address');
+    expect(app.state.message).toEqual({
+      text: 'The server sent a checkout link that is not a Stripe address. Run: mokkan buy --no-open to see it.',
+      tone: 'plain',
+    });
     server.on('POST', '/billing/checkout', () => ({ status: 404, body: { error: 'not_found', message: 'no' } }));
     await type(app, 'b');
     expect(app.state.message).toEqual({ text: 'Billing is not enabled on this server.', tone: 'red' });
+  });
+
+  it('points to mokkan buy --no-open when no browser opens', async () => {
+    seed(server);
+    const noBrowser = { text: 'Could not open a browser here. Run: mokkan buy --no-open (it prints the link).', tone: 'plain' };
+    const refused = makeApp(server, h, { openUrl: () => false });
+    await type(refused, 'b');
+    expect(refused.state.message).toEqual(noBrowser);
+    const throwing = makeApp(server, h, { openUrl: () => { throw new Error('spawn failed'); } });
+    await type(throwing, 'b');
+    expect(throwing.state.message).toEqual(noBrowser);
+    expect(server.count('POST', '/billing/checkout')).toBe(2);
   });
 });
 
@@ -498,6 +533,8 @@ describe('TuiApp login screen', () => {
     await type(app, 'you.com\x1b[D\x1b[D\x1b[D\x1b[D');
     await type(app, `${PASTE_START}@example${PASTE_END}`);
     expect(app.state.login).toMatchObject({ field: 'email', email: 'you@example.com', cursor: 11 });
+    await type(app, `\t${PASTE_START}${'p'.repeat(2500)}${PASTE_END}`);
+    expect(app.state.login).toMatchObject({ field: 'password', password: 'p'.repeat(2000), cursor: 2000 });
   });
 
   it('rejects an empty email or password locally', async () => {
