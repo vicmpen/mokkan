@@ -4,6 +4,7 @@ import { MokkanClient } from '../src/client.js';
 import { clearCredentials, credentialsPath, saveCredentials } from '../src/credentials.js';
 import { TuiApp } from '../src/tui/app.js';
 import { MAX_INPUT_CODE_POINTS } from '../src/tui/state.js';
+import { displayWidth } from '../src/tui/text.js';
 import { decodeKeys, PASTE_END, PASTE_START } from '../src/tui/keys.js';
 import { CliHarness, NOW } from './cli-harness.js';
 import { FakeServer, tokenPair, type FakeAccount } from './fake-server.js';
@@ -494,6 +495,14 @@ describe('TuiApp actions', () => {
     expect(app.rows()[0].text).toBe('hello');
   });
 
+  const BUY_OPENED = 'Opened Stripe Checkout in your browser; the balance updates after payment.';
+  const BUY_NO_BROWSER = 'Could not open a browser here. Run: mokkan buy --no-open (prints the link).';
+  const BUY_UNTRUSTED = 'Checkout link is not a Stripe address. Run: mokkan buy --no-open to see it.';
+
+  it('keeps each buy message on one 79-column line', () => {
+    for (const text of [BUY_OPENED, BUY_NO_BROWSER, BUY_UNTRUSTED]) expect(displayWidth(text)).toBeLessThanOrEqual(79);
+  });
+
   it('opens a trusted checkout link, refuses an untrusted one, and reports missing billing', async () => {
     seed(server);
     const opened: string[] = [];
@@ -502,17 +511,11 @@ describe('TuiApp actions', () => {
     await type(app, 'b');
     expect(server.count('POST', '/billing/checkout')).toBe(1);
     expect(opened).toEqual(['https://checkout.stripe.com/c/pay/cs_test_fake']);
-    expect(app.state.message).toEqual({
-      text: 'Opened Stripe Checkout in your browser. When the payment completes, the balance updates on the next refresh.',
-      tone: 'plain',
-    });
+    expect(app.state.message).toEqual({ text: BUY_OPENED, tone: 'plain' });
     server.withAccount({ checkoutUrl: 'https://evil.example/pay' });
     await type(app, 'b');
     expect(opened).toHaveLength(1);
-    expect(app.state.message).toEqual({
-      text: 'The server sent a checkout link that is not a Stripe address. Run: mokkan buy --no-open to see it.',
-      tone: 'plain',
-    });
+    expect(app.state.message).toEqual({ text: BUY_UNTRUSTED, tone: 'plain' });
     server.on('POST', '/billing/checkout', () => ({ status: 404, body: { error: 'not_found', message: 'no' } }));
     await type(app, 'b');
     expect(app.state.message).toEqual({ text: 'Billing is not enabled on this server.', tone: 'red' });
@@ -520,7 +523,7 @@ describe('TuiApp actions', () => {
 
   it('points to mokkan buy --no-open when no browser opens', async () => {
     seed(server);
-    const noBrowser = { text: 'Could not open a browser here. Run: mokkan buy --no-open (it prints the link).', tone: 'plain' };
+    const noBrowser = { text: BUY_NO_BROWSER, tone: 'plain' };
     const refused = makeApp(server, h, { openUrl: () => false });
     await type(refused, 'b');
     expect(refused.state.message).toEqual(noBrowser);

@@ -442,3 +442,20 @@ state change ──onChange──▶ runTerminal redraw ──render(state, size
   test requires. `codex/SKILL.md`: the same one-line note.
 - No new dependencies. No version bump (0.2.0 is unreleased). `claude-plugin/scripts/mokkan.mjs` is rebuilt and
   committed.
+
+## Amendments (2026-10-01, after the whole-branch review)
+
+- Pasted text arrives as one `paste` key. Only input fields and the login fields accept it (inserted at the cursor);
+  normal mode and confirm mode ignore it.
+- A complete escape sequence that is not recognized produces no key; it is not `Esc`.
+- The renderer draws into `columns - 1` columns, and the driver clears each line (`\x1b[2K`) before writing it.
+- The confirm prompt shortens the reminder text to fit, so `y/n` always shows.
+- After a successful `deliver` the list is fetched again and adopted with its version (the version returned by
+  `deliver` is not adopted on its own). Nothing is delivered while the Done tab is shown.
+- On a stale edit or time change, the input reopens with the typed text.
+- Refreshes are deduplicated: a refresh requested while one is queued or running joins it.
+- `b` no longer prints the URL on the message line. The messages are `Opened Stripe Checkout in your browser; the
+  balance updates after payment.`, `Could not open a browser here. Run: mokkan buy --no-open (prints the link).` and
+  `Checkout link is not a Stripe address. Run: mokkan buy --no-open to see it.`; `mokkan buy --no-open` prints the link.
+- Input buffers are capped at 2000 code points.
+- The flush timer keeps the held text while inside a paste.

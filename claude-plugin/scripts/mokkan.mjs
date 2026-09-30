@@ -1955,7 +1955,7 @@ var TuiApp = class {
         throw err;
       }
       if (!isTrustedCheckoutUrl(res.url)) {
-        this.say("The server sent a checkout link that is not a Stripe address. Run: mokkan buy --no-open to see it.");
+        this.say("Checkout link is not a Stripe address. Run: mokkan buy --no-open to see it.");
         return;
       }
       let opened = false;
@@ -1963,7 +1963,7 @@ var TuiApp = class {
         opened = this.openUrl?.(res.url) ?? false;
       } catch {
       }
-      this.say(opened ? "Opened Stripe Checkout in your browser. When the payment completes, the balance updates on the next refresh." : "Could not open a browser here. Run: mokkan buy --no-open (it prints the link).");
+      this.say(opened ? "Opened Stripe Checkout in your browser; the balance updates after payment." : "Could not open a browser here. Run: mokkan buy --no-open (prints the link).");
     });
   }
   listHeight() {
