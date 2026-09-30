@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { main, type CliIO } from '../src/cli.js';
+import { main, type CliIO, type TerminalIO } from '../src/cli.js';
 import { saveCredentials, type Credentials } from '../src/credentials.js';
 import type { Reminder } from '../src/types.js';
 
@@ -23,6 +23,7 @@ export interface RunOptions {
   /** The running CLI file and node binary `mokkan statusline` writes into configs (defaults: a temp file, /usr/bin/node). */
   cliPath?: string;
   nodePath?: string;
+  tty?: TerminalIO;
 }
 
 export interface RunResult { code: number; stdout: string; stderr: string }
@@ -83,6 +84,7 @@ export class CliHarness {
       openUrl: (url) => { opts.opened?.push(url); },
       cliPath: opts.cliPath ?? this.fakeCli(),
       nodePath: opts.nodePath ?? '/usr/bin/node',
+      tty: opts.tty,
     };
     const code = await main(argv, io);
     return { code, stdout, stderr };
@@ -94,4 +96,40 @@ export function reminder(over: Partial<Reminder> & { id: string; text: string })
     state: 'due', position: 1, due_at: null, created_at: NOW.toISOString(),
     delivered_at: null, acknowledged_at: null, done_at: null, ...over,
   };
+}
+
+/** A terminal for `mokkan ui` tests: typed text is buffered until the TUI listens, size is settable. */
+export class FakeTerminal implements TerminalIO {
+  readonly rawModes: boolean[] = [];
+  private dataListener: ((chunk: string) => void) | null = null;
+  private resizeListener: (() => void) | null = null;
+  private pending: string[] = [];
+
+  constructor(public columns = 80, public rows = 24) {}
+
+  size(): { columns: number; rows: number } { return { columns: this.columns, rows: this.rows }; }
+  setRawMode(on: boolean): void { this.rawModes.push(on); }
+
+  onData(listener: (chunk: string) => void): () => void {
+    this.dataListener = listener;
+    for (const chunk of this.pending.splice(0)) listener(chunk);
+    return () => { if (this.dataListener === listener) this.dataListener = null; };
+  }
+
+  onResize(listener: () => void): () => void {
+    this.resizeListener = listener;
+    return () => { this.resizeListener = null; };
+  }
+
+  /** Types raw bytes as a user would (`'\x1b[B'` is the down arrow). */
+  type(text: string): void {
+    if (this.dataListener) this.dataListener(text);
+    else this.pending.push(text);
+  }
+
+  resize(columns: number, rows: number): void {
+    this.columns = columns;
+    this.rows = rows;
+    this.resizeListener?.();
+  }
 }

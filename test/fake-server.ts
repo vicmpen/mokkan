@@ -77,6 +77,8 @@ export class FakeServer {
    * 409 not_editable, 404 for done/unknown, 400 for bad text; every 3rd edit costs 1), POST /billing/checkout and
    * GET /billing/balance.
    * The default balance is large so tests that push are never charged into a 402.
+   * Also POST /heartbeat, GET /reminders/pending, POST /reminders/deliver|pop|dequeue|ack (409 stale on a wrong
+   * expected_version, 404 empty).
    */
   withAccount(init: { balance?: number; email?: string; checkoutUrl?: string } = {}): FakeAccount {
     const acct: FakeAccount = {
@@ -170,6 +172,55 @@ export class FakeServer {
       return { status: 200, body: { url: acct.checkoutUrl, session_id: 'cs_test_fake' } };
     });
     this.on('GET', '/billing/balance', () => ({ status: 200, body: { balance: acct.balance, ledger: acct.ledger.slice(0, 20) } }));
+    const active = () => [...acct.reminders.values()].filter((r) => ['due', 'delivered', 'acknowledged'].includes(r.state))
+      .sort((a, b) => Number(b.position ?? 0) - Number(a.position ?? 0));
+    const stale = (expected: unknown): FakeResponse | null => expected !== undefined && expected !== acct.version
+      ? { status: 409, body: { error: 'stale', message: 'Your view of the list is out of date', version: acct.version, reminders: active() } }
+      : null;
+    this.on('POST', '/heartbeat', () => ({ status: 200, body: { active_until: '2026-09-28T12:05:00.000Z' } }));
+    this.on('GET', '/reminders/pending', () => ({ status: 200, body: {
+      due: active().filter((r) => r.state === 'due'), awaiting_ack: active().filter((r) => r.state === 'delivered'),
+    } }));
+    this.on('POST', '/reminders/deliver', (req) => {
+      const delivered: string[] = [];
+      for (const id of (req.body as { ids: string[] }).ids) {
+        const r = acct.reminders.get(id);
+        if (r && r.state === 'due') { r.state = 'delivered'; r.delivered_at = '2026-09-28T12:00:00.000Z'; delivered.push(id); }
+      }
+      if (delivered.length > 0) acct.version += 1;
+      return { status: 200, body: { version: acct.version, delivered } };
+    });
+    const take = (end: 'top' | 'bottom') => (req: Recorded): FakeResponse => {
+      const conflict = stale((req.body as { expected_version?: number } | null)?.expected_version);
+      if (conflict) return conflict;
+      const list = active();
+      const r = end === 'top' ? list[0] : list[list.length - 1];
+      if (!r) return { status: 404, body: { error: 'empty', message: 'List is empty' } };
+      r.state = 'done';
+      r.done_at = '2026-09-28T12:00:00.000Z';
+      acct.version += 1;
+      return { status: 200, body: { version: acct.version, reminder: structuredClone(r) } };
+    };
+    this.on('POST', '/reminders/pop', take('top'));
+    this.on('POST', '/reminders/dequeue', take('bottom'));
+    this.on('POST', '/reminders/ack', (req) => {
+      const body = req.body as { ids?: string[]; all?: boolean; expected_version?: number };
+      const conflict = stale(body.expected_version);
+      if (conflict) return conflict;
+      const targets = body.all === true
+        ? active()
+        : (body.ids ?? []).map((id) => acct.reminders.get(id)).filter((r) => r !== undefined);
+      const acknowledged: string[] = [];
+      for (const r of targets) {
+        if (r.state === 'due' || r.state === 'delivered') {
+          r.state = 'acknowledged';
+          r.acknowledged_at = '2026-09-28T12:00:00.000Z';
+          acknowledged.push(r.id);
+        }
+      }
+      if (acknowledged.length > 0) acct.version += 1;
+      return { status: 200, body: { version: acct.version, acknowledged } };
+    });
     return acct;
   }
 

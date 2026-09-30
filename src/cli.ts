@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { ApiError, NetworkError, MokkanClient } from './client.js';
+import { ApiError, NetworkError, MokkanClient, apiErrorHint } from './client.js';
 import {
   clearCredentials, CredentialsCorruptError, CredentialsLockError, CredentialsPermissionError, loadCredentials, resolveServerUrl,
   saveCredentials, withCredentialsLock, type Credentials,
@@ -20,6 +20,15 @@ import { isRenderInvocation, statuslineCommand } from './statusline.js';
 import {
   migrateLegacyInvocation, nonTerminalHint, refreshStableCopy, statuslineSetupCommand, type SetupDeps,
 } from './statusline-setup.js';
+
+/** The interactive terminal `mokkan ui` drives. Absent when stdin or stdout is not a TTY. */
+export interface TerminalIO {
+  size(): { columns: number; rows: number };
+  setRawMode(on: boolean): void;
+  /** Delivers raw input chunks (already decoded as UTF-8). The returned function unsubscribes and pauses stdin. */
+  onData(listener: (chunk: string) => void): () => void;
+  onResize(listener: () => void): () => void;
+}
 
 export interface CliIO {
   stdout(text: string): void;
@@ -43,6 +52,8 @@ export interface CliIO {
   /** The running CLI file and node binary written into status line configs (default process.argv[1], process.execPath). */
   cliPath?: string;
   nodePath?: string;
+  /** The terminal for `mokkan ui` (defaultIO wires process.stdin/stdout; tests pass a FakeTerminal). */
+  tty?: TerminalIO;
 }
 
 export interface Ctx {
@@ -192,14 +203,8 @@ function reportError(err: unknown, io: CliIO): number {
   }
   if (err instanceof ApiError) {
     io.stderr(`${err.message}\n`);
-    const body = (err.body ?? {}) as { required?: unknown; cost?: unknown };
-    if (err.status === 402 && typeof body.required === 'number' && typeof body.cost === 'number' && body.required > body.cost) {
-      io.stderr(`(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)\n`);
-    }
-    if (err.status === 429 && err.retryAfterSeconds !== undefined) {
-      const s = Math.ceil(err.retryAfterSeconds);
-      io.stderr(`(try again in about ${s >= 60 ? `${Math.ceil(s / 60)} minutes` : `${s} seconds`})\n`);
-    }
+    const hint = apiErrorHint(err);
+    if (hint) io.stderr(`${hint}\n`);
     if (err.status === 402 && err.code === 'insufficient_credits') return EXIT_INSUFFICIENT_CREDITS;
     return err.status >= 500 ? 2 : 1;
   }

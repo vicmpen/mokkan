@@ -3,7 +3,7 @@ import { clearCredentials } from '../credentials.js';
 import { UserError } from '../errors.js';
 import type { Ctx } from '../cli.js';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
+export const EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 10;
 
 async function requireEmail(ctx: Ctx, given: string | undefined, usage: string): Promise<string> {

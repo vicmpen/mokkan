@@ -12,6 +12,19 @@ export class ApiError extends Error {
   }
 }
 
+/** The extra line the CLI prints after some API errors: the credit reserve note (402) or the retry delay (429). */
+export function apiErrorHint(err: ApiError): string | null {
+  const body = (err.body ?? {}) as { required?: unknown; cost?: unknown };
+  if (err.status === 402 && typeof body.required === 'number' && typeof body.cost === 'number' && body.required > body.cost) {
+    return `(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)`;
+  }
+  if (err.status === 429 && err.retryAfterSeconds !== undefined) {
+    const s = Math.ceil(err.retryAfterSeconds);
+    return `(try again in about ${s >= 60 ? `${Math.ceil(s / 60)} minutes` : `${s} seconds`})`;
+  }
+  return null;
+}
+
 export class NetworkError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
     super(message);
