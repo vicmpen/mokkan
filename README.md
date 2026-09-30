@@ -96,12 +96,12 @@ Add `--json` for machine-readable output. `mokkan help` lists everything.
 | `t` | change its due time: a duration, or `clear` (one edit) |
 | `a` / `A` | acknowledge the selected reminder / all |
 | `x` / `d` | pop the top / dequeue the bottom, after a `y/n` confirmation |
-| `b` | buy credits (opens Stripe Checkout in your browser) |
+| `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
 | `Tab` | switch between Active, All (adds scheduled) and Done |
 | `r` | refresh now |
 | `q`, `Ctrl-C` | quit |
 
-Reminders that are due while the view is open count as shown, exactly as when a session or `mokkan watch` shows them: acknowledge them with `a`, or their email goes out after the grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` stays a terminal command. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
+Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` stays a terminal command. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
 ## Credits and pricing
 

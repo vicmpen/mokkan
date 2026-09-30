@@ -1213,6 +1213,8 @@ async function statuslineCommand(io, args, makeClient2) {
 }
 
 // src/tui/state.ts
+var CHROME_ROWS = 6;
+var MAX_INPUT_CODE_POINTS = 2e3;
 var ACTIVE_STATES = /* @__PURE__ */ new Set(["due", "delivered", "acknowledged"]);
 function emptyLogin() {
   return { field: "email", email: "", password: "", cursor: 0, busy: false, error: null };
@@ -1244,11 +1246,70 @@ function rowsOf(state) {
 }
 
 // src/tui/text.ts
-var segmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+var segmenter;
+var WIDE = [
+  [4352, 4447],
+  [8986, 8987],
+  [9193, 9196],
+  [9200, 9200],
+  [9203, 9203],
+  [9725, 9726],
+  [9748, 9749],
+  [9800, 9811],
+  [9855, 9855],
+  [9875, 9875],
+  [9889, 9889],
+  [9898, 9899],
+  [9917, 9918],
+  [9924, 9925],
+  [9934, 9934],
+  [9940, 9940],
+  [9962, 9962],
+  [9970, 9971],
+  [9973, 9973],
+  [9978, 9978],
+  [9981, 9981],
+  [9989, 9989],
+  [9994, 9995],
+  [10024, 10024],
+  [10060, 10060],
+  [10062, 10062],
+  [10067, 10069],
+  [10071, 10071],
+  [10133, 10135],
+  [10160, 10160],
+  [10175, 10175],
+  [11035, 11036],
+  [11088, 11088],
+  [11093, 11093],
+  [11904, 42191],
+  [44032, 55203],
+  [63744, 64255],
+  [65072, 65103],
+  [65280, 65376],
+  [65504, 65510],
+  [126980, 126980],
+  [127183, 127183],
+  [127374, 127374],
+  [127377, 127386],
+  [127462, 127487],
+  [127489, 127569],
+  [127744, 128591],
+  [128640, 128767],
+  [128992, 129003],
+  [129280, 129535],
+  [129648, 129791],
+  [131072, 262141]
+];
 function isWide(cp) {
-  return cp >= 4352 && cp <= 4447 || cp >= 11904 && cp <= 42191 || cp >= 44032 && cp <= 55203 || cp >= 63744 && cp <= 64255 || cp >= 65072 && cp <= 65103 || cp >= 65280 && cp <= 65376 || cp >= 65504 && cp <= 65510 || cp >= 127462 && cp <= 127487 || cp >= 127744 && cp <= 128591 || cp >= 128640 && cp <= 128767 || cp >= 129280 && cp <= 129535 || cp >= 129648 && cp <= 129791 || cp >= 131072 && cp <= 262141;
+  for (const [lo, hi] of WIDE) {
+    if (cp < lo) return false;
+    if (cp <= hi) return true;
+  }
+  return false;
 }
 function graphemes(text) {
+  segmenter ??= new Intl.Segmenter(void 0, { granularity: "grapheme" });
   return [...segmenter.segment(text)].map((s) => s.segment);
 }
 function graphemeWidth(g) {
@@ -1284,7 +1345,6 @@ function padStart(text, width) {
 // src/tui/screen.ts
 var MIN_COLUMNS = 20;
 var MIN_ROWS = 8;
-var CHROME_ROWS = 6;
 var MIN_TEXT_COLUMNS = 10;
 var ROW_PREFIX_COLUMNS = 1 + 3 + 2 + 12 + 1;
 var TIME_GAP_COLUMNS = 2;
@@ -1327,38 +1387,43 @@ function line(left, right, columns, opts = {}) {
   return paintParts(l, extra) + (opts.rowStyle ? paint2(gap, opts.rowStyle) : gap) + paintParts(r, extra);
 }
 function inputWindow(buffer, cursor, width) {
-  const chars = [...buffer];
-  const w = (from, to) => displayWidth(chars.slice(from, to).join(""));
+  const gs = graphemes(buffer);
+  const before = [0];
+  for (const g of gs) before.push(before[before.length - 1] + graphemeWidth(g));
+  let at = 0;
+  for (let seen = 0; at < gs.length && seen < cursor; at++) seen += [...gs[at]].length;
   let start = 0;
-  while (start < cursor && w(start, cursor) >= width) start++;
-  let end = cursor;
-  while (end < chars.length && w(start, end + 1) <= width) end++;
-  return { text: chars.slice(start, end).join(""), cursorColumn: w(start, cursor) };
+  while (start < at && before[at] - before[start] >= width) start++;
+  let end = at;
+  while (end < gs.length && before[end + 1] - before[start] <= width) end++;
+  return { text: gs.slice(start, end).join(""), cursorColumn: before[at] - before[start] };
 }
+var drawable = (size) => ({ columns: size.columns - 1, rows: size.rows });
 function render(state, size, now) {
   const { columns, rows } = size;
   let lines;
   if (columns < MIN_COLUMNS || rows < MIN_ROWS) {
-    lines = [fit("mokkan ui: terminal too small", columns)];
+    lines = [fit("mokkan ui: terminal too small", columns - 1)];
   } else if (state.screen === "login") {
-    lines = loginLines(state, size);
+    lines = loginLines(state, drawable(size));
   } else {
-    lines = dashboardLines(state, size, now);
+    lines = dashboardLines(state, drawable(size), now);
   }
   while (lines.length < rows) lines.push("");
   return lines.slice(0, rows).map((l) => `${l}\x1B[0m`);
 }
 function cursorPosition(state, size) {
   if (size.columns < MIN_COLUMNS || size.rows < MIN_ROWS) return null;
+  const { columns } = drawable(size);
   if (state.screen === "login") {
     const l = state.login;
     const value = l.field === "email" ? l.email : "\u2022".repeat([...l.password].length);
-    const { cursorColumn: cursorColumn2 } = inputWindow(value, l.cursor, size.columns - LOGIN_FIELD_COLUMN);
+    const { cursorColumn: cursorColumn2 } = inputWindow(value, l.cursor, columns - LOGIN_FIELD_COLUMN);
     return { row: l.field === "email" ? 5 : 6, column: LOGIN_FIELD_COLUMN + cursorColumn2 + 1 };
   }
   if (state.mode.kind !== "input") return null;
   const labelWidth = displayWidth(` ${clean(state.mode.label)} \u203A `);
-  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, size.columns - labelWidth);
+  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, columns - labelWidth);
   return { row: size.rows - 1, column: labelWidth + cursorColumn + 1 };
 }
 function dashboardLines(state, size, now) {
@@ -1429,7 +1494,7 @@ function row(r, index, selected, columns, now) {
   const { when, tone } = timing(r, now);
   const left = [
     part(`${selected ? "\u25B8" : " "}${padStart(String(index + 1), 3)}  `),
-    part(padEnd(r.state, 12), tone),
+    part(padEnd(clean(r.state), 12), tone),
     part(` ${clean(r.text)}`)
   ];
   const right = when === "" ? [] : [part(when, tone)];
@@ -1446,7 +1511,11 @@ function footer(state, columns) {
     const { text } = inputWindow(blankControls(m.buffer), m.cursor, columns - displayWidth(label));
     return [line([part(label, "bold"), part(text)], [], columns), line([part(` ${m.hint}`, "dim")], [], columns)];
   }
-  if (m.kind === "confirm") return [line([part(` ${clean(m.prompt)}`, "yellow")], [], columns), ""];
+  if (m.kind === "confirm") {
+    const verb = m.action === "pop" ? "Pop" : "Dequeue";
+    const room = columns - displayWidth(` ${verb} ""? y/n`);
+    return [line([part(` ${verb} "${fit(clean(m.text), room)}"? y/n`, "yellow")], [], columns), ""];
+  }
   return [
     line([part(" p push \xB7 i schedule \xB7 e edit \xB7 t time \xB7 a ack \xB7 A ack all", "dim")], [], columns),
     line([part(" x pop \xB7 d dequeue \xB7 b buy \xB7 Tab view \xB7 r refresh \xB7 q quit \xB7 \u2191\u2193 move", "dim")], [], columns)
@@ -1477,12 +1546,13 @@ function loginLines(state, size) {
 // src/tui/app.ts
 var REFRESH_INTERVAL_MS = 1e4;
 var TABS = ["active", "all", "done"];
-var CHROME_ROWS2 = 6;
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
 }
+var isStale = (err) => err instanceof ApiError && err.status === 409 && err.code === "stale";
 function editLine(line2, key) {
   const chars = [...line2.buffer];
+  const room = Math.max(0, MAX_INPUT_CODE_POINTS - chars.length);
   switch (key.name) {
     case "left":
       line2.cursor = Math.max(0, line2.cursor - 1);
@@ -1510,9 +1580,21 @@ function editLine(line2, key) {
       line2.cursor = 0;
       break;
     case "char":
-      chars.splice(line2.cursor, 0, key.ch);
-      line2.cursor += 1;
+      if (room > 0) {
+        chars.splice(line2.cursor, 0, key.ch);
+        line2.cursor += 1;
+      }
       break;
+    case "paste": {
+      const added = [];
+      for (const c of key.text) {
+        if (added.length >= room) break;
+        added.push(c);
+      }
+      chars.splice(line2.cursor, 0, ...added);
+      line2.cursor += added.length;
+      break;
+    }
     default:
       return false;
   }
@@ -1527,6 +1609,8 @@ var TuiApp = class {
   onChange = () => void 0;
   size = { columns: 80, rows: 24 };
   queue = Promise.resolve();
+  /** The refresh that is queued or running; asking for another one joins it. */
+  pendingRefresh = null;
   /** Ids already sent to /reminders/deliver, so a slow server never gets them twice. */
   delivered = /* @__PURE__ */ new Set();
   client;
@@ -1549,12 +1633,16 @@ var TuiApp = class {
     return render(this.state, size, now);
   }
   refresh() {
-    return this.enqueue(() => this.doRefresh());
+    this.pendingRefresh ??= this.enqueue(() => this.doRefresh()).finally(() => {
+      this.pendingRefresh = null;
+    });
+    return this.pendingRefresh;
   }
   handleKey(key) {
     const s = this.state;
     if (s.screen === "login") return this.loginKey(key);
     if (s.mode.kind === "input") return this.inputKey(s.mode, key);
+    if (key.name === "paste") return Promise.resolve();
     if (s.mode.kind === "confirm") return this.confirmKey(s.mode, key);
     return this.normalKey(key);
   }
@@ -1573,12 +1661,12 @@ var TuiApp = class {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (counts as one edit) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text });
+      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (counts as one edit) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
     if (ch === "t") {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput("time", `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" \xB7 Enter to save (counts as one edit) \xB7 Esc to cancel', { targetId: r.id });
+      return this.startInput("time", `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" \xB7 Enter to save (counts as one edit) \xB7 Esc to cancel', { targetId: r.id, version: this.state.version });
     }
     if (ch === "a") return this.ackSelected();
     if (ch === "A") return this.ackAll();
@@ -1721,7 +1809,6 @@ var TuiApp = class {
       this.changed();
       return Promise.resolve();
     }
-    const version = s.version ?? void 0;
     switch (mode.purpose) {
       case "push":
         return this.action(async () => {
@@ -1756,9 +1843,9 @@ var TuiApp = class {
           return Promise.resolve();
         }
         return this.action(async () => {
-          const res = await this.client.editReminder(mode.targetId, { text }, version);
+          const res = await this.client.editReminder(mode.targetId, { text }, mode.version ?? void 0);
           this.say(`Edited [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
-        });
+        }, mode);
       case "time": {
         let dueAt = null;
         if (text !== "clear") {
@@ -1772,11 +1859,11 @@ var TuiApp = class {
         }
         const now = this.now();
         return this.action(async () => {
-          const res = await this.client.editReminder(mode.targetId, { due_at: dueAt }, version);
+          const res = await this.client.editReminder(mode.targetId, { due_at: dueAt }, mode.version ?? void 0);
           const r = res.reminder;
           const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : "(time cleared)";
           this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, "green");
-        });
+        }, mode);
       }
     }
   }
@@ -1789,8 +1876,11 @@ var TuiApp = class {
       return null;
     }
   }
-  /** Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`. */
-  action(work) {
+  /**
+   * Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`.
+   * `reopen`: the edit or time input to bring back, typed text and all, when the list changed under it.
+   */
+  action(work, reopen) {
     this.state.mode = { kind: "normal" };
     this.changed();
     return this.enqueue(async () => {
@@ -1798,6 +1888,11 @@ var TuiApp = class {
         await work();
       } catch (err) {
         await this.fail(err);
+        const s = this.state;
+        if (reopen && isStale(err) && s.screen === "dashboard" && s.mode.kind === "normal") {
+          s.mode = { ...reopen, version: s.version };
+          this.changed();
+        }
         return;
       }
       await this.doRefresh();
@@ -1811,7 +1906,7 @@ var TuiApp = class {
       return Promise.resolve();
     }
     this.state.message = null;
-    this.state.mode = { kind: "confirm", action, prompt: `${action === "pop" ? "Pop" : "Dequeue"} "${target.text}"? y/n` };
+    this.state.mode = { kind: "confirm", action, text: target.text, version: this.state.version };
     this.changed();
     return Promise.resolve();
   }
@@ -1822,7 +1917,7 @@ var TuiApp = class {
       this.changed();
       return Promise.resolve();
     }
-    const version = this.state.version ?? void 0;
+    const version = mode.version ?? void 0;
     return this.action(async () => {
       const res = mode.action === "pop" ? await this.client.pop(version) : await this.client.dequeue(version);
       this.say(`${mode.action === "pop" ? "Popped" : "Dequeued"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
@@ -1843,7 +1938,10 @@ var TuiApp = class {
       this.say(`Acknowledged ${res.acknowledged.length} reminder(s).`, "green");
     });
   }
-  /** Same rules as `mokkan buy`: only a Stripe Checkout address is opened; the link is always shown. */
+  /**
+   * Same rules as `mokkan buy`: only a Stripe Checkout address is opened. The link does not fit the message line,
+   * so when it cannot be opened the message points to `mokkan buy --no-open`, which prints it.
+   */
   buy() {
     return this.action(async () => {
       let res;
@@ -1856,20 +1954,20 @@ var TuiApp = class {
         }
         throw err;
       }
-      let how = "\xB7 open it in your browser";
-      if (!isTrustedCheckoutUrl(res.url)) how = "\xB7 not opened: not a Stripe Checkout address";
-      else if (this.openUrl) {
-        try {
-          this.openUrl(res.url);
-          how = "\xB7 opening in your browser";
-        } catch {
-        }
+      if (!isTrustedCheckoutUrl(res.url)) {
+        this.say("The server sent a checkout link that is not a Stripe address. Run: mokkan buy --no-open to see it.");
+        return;
       }
-      this.say(`Checkout: ${res.url} ${how} When the payment completes, the balance updates on the next refresh.`);
+      let opened = false;
+      try {
+        opened = this.openUrl?.(res.url) ?? false;
+      } catch {
+      }
+      this.say(opened ? "Opened Stripe Checkout in your browser. When the payment completes, the balance updates on the next refresh." : "Could not open a browser here. Run: mokkan buy --no-open (it prints the link).");
     });
   }
   listHeight() {
-    return Math.max(1, this.size.rows - CHROME_ROWS2);
+    return Math.max(1, this.size.rows - CHROME_ROWS);
   }
   clampSelection() {
     const s = this.state;
@@ -1899,12 +1997,13 @@ var TuiApp = class {
     s.refreshing = true;
     this.changed();
     try {
-      const [list, me, , done] = await Promise.all([
+      const [first, me, , done] = await Promise.all([
         this.client.list("all"),
         this.client.me().catch(() => null),
         this.client.heartbeat("ui").catch(() => null),
         s.tab === "done" ? this.client.list("done") : null
       ]);
+      const list = await this.deliverDue(first.reminders) ? await this.client.list("all") : first;
       const keep = this.rows()[s.selected]?.id;
       s.reminders = list.reminders;
       s.version = list.version;
@@ -1915,7 +2014,6 @@ var TuiApp = class {
       const idx = keep === void 0 ? -1 : this.rows().findIndex((r) => r.id === keep);
       if (idx !== -1) s.selected = idx;
       this.clampSelection();
-      await this.deliverDue();
     } catch (err) {
       if (this.sessionLost(err)) {
         this.toLogin("Session expired, log in again.");
@@ -1927,29 +2025,23 @@ var TuiApp = class {
       this.changed();
     }
   }
-  /** Reminders shown here count as shown: due ones are marked delivered, like the hooks and `mokkan watch` do. */
-  async deliverDue() {
-    const s = this.state;
-    const ids = s.reminders.filter((r) => r.state === "due" && !this.delivered.has(r.id)).map((r) => r.id);
-    if (ids.length === 0) return;
+  /**
+   * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
+   * `mokkan watch` do. Not on the Done tab, which does not show them. Returns whether the server took the call.
+   */
+  async deliverDue(reminders) {
+    if (this.state.tab === "done") return false;
+    const ids = reminders.filter((r) => r.state === "due" && !this.delivered.has(r.id)).map((r) => r.id);
+    if (ids.length === 0) return false;
     for (const id of ids) this.delivered.add(id);
-    let res;
     try {
-      res = await this.client.deliver(ids);
+      await this.client.deliver(ids);
     } catch (err) {
       if (this.sessionLost(err)) throw err;
       for (const id of ids) this.delivered.delete(id);
-      return;
+      return false;
     }
-    s.version = res.version;
-    const at = this.now().toISOString();
-    for (const id of res.delivered) {
-      const r = s.reminders.find((x) => x.id === id);
-      if (r) {
-        r.state = "delivered";
-        r.delivered_at = at;
-      }
-    }
+    return true;
   }
   sessionLost(err) {
     return err instanceof SessionExpiredError || err instanceof ApiError && err.code === "no_credentials";
@@ -1985,7 +2077,7 @@ var TuiApp = class {
       return;
     }
     if (err instanceof ApiError) {
-      if (err.status === 409 && err.code === "stale") {
+      if (isStale(err)) {
         await this.doRefresh();
         this.say("The list changed, try again.", "yellow");
         return;
@@ -2043,7 +2135,8 @@ var SINGLE = {
 var isControl = (cp) => cp < 32 || cp >= 127 && cp <= 159;
 var INCOMPLETE_TAIL = /\x1b(?:\[[\x20-\x3f]*|O)?$/;
 var KeyDecoder = class {
-  inPaste = false;
+  /** The cleaned text of the paste being read, or null outside a paste. */
+  paste = null;
   /** The incomplete escape sequence held back from the end of the last chunk. */
   pending = "";
   feed(chunk) {
@@ -2054,9 +2147,11 @@ var KeyDecoder = class {
   }
   /**
    * Decodes the held-back tail as if the input ended there: a lone ESC is `escape`, an incomplete sequence is
-   * dropped.
+   * dropped. Inside a paste nothing changes (a paste never holds a real Esc press), so an end marker split across
+   * chunks still ends it.
    */
   flush() {
+    if (this.paste !== null) return [];
     const rest = this.pending;
     this.pending = "";
     return this.decode(rest);
@@ -2065,18 +2160,19 @@ var KeyDecoder = class {
     const keys = [];
     let i = 0;
     while (i < chunk.length) {
-      if (this.inPaste) {
+      if (this.paste !== null) {
         const end = chunk.indexOf(PASTE_END, i);
-        keys.push(...pasteChars(end === -1 ? chunk.slice(i) : chunk.slice(i, end)));
+        this.paste += pasteText(end === -1 ? chunk.slice(i) : chunk.slice(i, end));
         if (end === -1) return keys;
-        this.inPaste = false;
+        if (this.paste !== "") keys.push({ name: "paste", text: this.paste });
+        this.paste = null;
         i = end + PASTE_END.length;
         continue;
       }
       const c = chunk[i];
       if (c === "\x1B") {
         if (chunk.startsWith(PASTE_START, i)) {
-          this.inPaste = true;
+          this.paste = "";
           i += PASTE_START.length;
           continue;
         }
@@ -2104,8 +2200,8 @@ var KeyDecoder = class {
     return keys;
   }
 };
-function pasteChars(text) {
-  const keys = [];
+function pasteText(text) {
+  let out = "";
   let i = 0;
   while (i < text.length) {
     if (text[i] === "\x1B") {
@@ -2113,17 +2209,17 @@ function pasteChars(text) {
       continue;
     }
     if (text.startsWith("\r\n", i)) {
-      keys.push({ name: "char", ch: " " });
+      out += " ";
       i += 2;
       continue;
     }
     const cp = text.codePointAt(i);
     const c = String.fromCodePoint(cp);
     i += c.length;
-    if (c === "\r" || c === "\n" || c === "	") keys.push({ name: "char", ch: " " });
-    else if (!isControl(cp)) keys.push({ name: "char", ch: c });
+    if (c === "\r" || c === "\n" || c === "	") out += " ";
+    else if (!isControl(cp)) out += c;
   }
-  return keys;
+  return out;
 }
 function unknownSequenceLength(chunk, at) {
   const next = chunk[at + 1];
@@ -2152,6 +2248,7 @@ async function runTerminal(app, io, tty) {
   let flushTimer = null;
   let left = false;
   const draw = () => {
+    if (pending !== null) clearTimeout(pending);
     pending = null;
     if (left) return;
     const size = tty.size();
@@ -2159,7 +2256,7 @@ async function runTerminal(app, io, tty) {
     const frame = app.render(size, io.now());
     const cursor = cursorPosition(app.state, size);
     const place = cursor ? `\x1B[${cursor.row};${cursor.column}H\x1B[?25h` : "\x1B[?25l";
-    io.stdout(`\x1B[H${frame.map((l) => `${l}\x1B[K`).join("\r\n")}${place}`);
+    io.stdout(`\x1B[H${frame.map((l) => `\x1B[2K${l}`).join("\r\n")}${place}`);
   };
   const scheduleDraw = () => {
     if (pending === null && !left) pending = setTimeout(draw, 0);
@@ -2178,10 +2275,20 @@ async function runTerminal(app, io, tty) {
     app.exitCode = 0;
     wake();
   };
+  const report = (err) => {
+    app.state.message = { text: errorText(err), tone: "red" };
+    scheduleDraw();
+  };
+  const dispatch = (keys) => {
+    for (const key of keys) {
+      if (app.exitCode !== null) return;
+      void app.handleKey(key).catch(report);
+    }
+  };
   const decoder = new KeyDecoder();
   const flush = () => {
     flushTimer = null;
-    for (const key of decoder.flush()) void app.handleKey(key);
+    dispatch(decoder.flush());
   };
   app.onChange = () => {
     scheduleDraw();
@@ -2194,19 +2301,20 @@ async function runTerminal(app, io, tty) {
     io.stdout(ENTER_SCREEN);
     tty.setRawMode(true);
     unData = tty.onData((chunk) => {
-      for (const key of decoder.feed(chunk)) void app.handleKey(key);
+      dispatch(decoder.feed(chunk));
       if (flushTimer !== null) clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, ESC_FLUSH_MS);
     });
     unResize = tty.onResize(scheduleDraw);
     process.once("exit", restoreOnExit);
     process.once("SIGTERM", onSignal);
+    process.once("SIGINT", onSignal);
     process.once("SIGHUP", onSignal);
     timer = setInterval(() => {
-      void app.refresh();
+      void app.refresh().catch(report);
     }, REFRESH_INTERVAL_MS);
     draw();
-    void app.refresh();
+    void app.refresh().catch(report);
     wake();
     await finished;
   } finally {
@@ -2219,9 +2327,13 @@ async function runTerminal(app, io, tty) {
     unResize();
     process.off("exit", restoreOnExit);
     process.off("SIGTERM", onSignal);
+    process.off("SIGINT", onSignal);
     process.off("SIGHUP", onSignal);
-    tty.setRawMode(false);
-    io.stdout(LEAVE_SCREEN);
+    try {
+      tty.setRawMode(false);
+    } finally {
+      io.stdout(LEAVE_SCREEN);
+    }
   }
   return app.exitCode ?? 0;
 }
