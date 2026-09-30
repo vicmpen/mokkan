@@ -81,15 +81,21 @@ export function inputWindow(buffer: string, cursor: number, width: number): { te
   return { text: chars.slice(start, end).join(''), cursorColumn: w(start, cursor) };
 }
 
+/**
+ * Everything is drawn one column narrower than the terminal: xterm-family terminals erase a character written in
+ * the last column when the next line is cleared, so that column stays blank.
+ */
+const drawable = (size: Size): Size => ({ columns: size.columns - 1, rows: size.rows });
+
 export function render(state: TuiState, size: Size, now: Date): string[] {
   const { columns, rows } = size;
   let lines: string[];
   if (columns < MIN_COLUMNS || rows < MIN_ROWS) {
-    lines = [fit('mokkan ui: terminal too small', columns)];
+    lines = [fit('mokkan ui: terminal too small', columns - 1)];
   } else if (state.screen === 'login') {
-    lines = loginLines(state, size);
+    lines = loginLines(state, drawable(size));
   } else {
-    lines = dashboardLines(state, size, now);
+    lines = dashboardLines(state, drawable(size), now);
   }
   while (lines.length < rows) lines.push('');
   return lines.slice(0, rows).map((l) => `${l}\x1b[0m`);
@@ -98,15 +104,16 @@ export function render(state: TuiState, size: Size, now: Date): string[] {
 /** Where the terminal cursor goes (1-based), or null to keep it hidden. */
 export function cursorPosition(state: TuiState, size: Size): { row: number; column: number } | null {
   if (size.columns < MIN_COLUMNS || size.rows < MIN_ROWS) return null;
+  const { columns } = drawable(size);
   if (state.screen === 'login') {
     const l = state.login;
     const value = l.field === 'email' ? l.email : '•'.repeat([...l.password].length);
-    const { cursorColumn } = inputWindow(value, l.cursor, size.columns - LOGIN_FIELD_COLUMN);
+    const { cursorColumn } = inputWindow(value, l.cursor, columns - LOGIN_FIELD_COLUMN);
     return { row: l.field === 'email' ? 5 : 6, column: LOGIN_FIELD_COLUMN + cursorColumn + 1 };
   }
   if (state.mode.kind !== 'input') return null;
   const labelWidth = displayWidth(` ${clean(state.mode.label)} › `);
-  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, size.columns - labelWidth);
+  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, columns - labelWidth);
   return { row: size.rows - 1, column: labelWidth + cursorColumn + 1 };
 }
 
@@ -185,7 +192,7 @@ function row(r: Reminder, index: number, selected: boolean, columns: number, now
   const { when, tone } = timing(r, now);
   const left = [
     part(`${selected ? '▸' : ' '}${padStart(String(index + 1), 3)}  `),
-    part(padEnd(r.state, 12), tone),
+    part(padEnd(clean(r.state), 12), tone),
     part(` ${clean(r.text)}`),
   ];
   const right = when === '' ? [] : [part(when, tone)];

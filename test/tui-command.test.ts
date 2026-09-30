@@ -37,6 +37,9 @@ describe('mokkan ui', () => {
     expect(strip(res.stdout)).toContain(' mokkan · a@example.com');
     expect(strip(res.stdout)).toContain('x pop · d dequeue · b buy');
     expect(tty.rawModes).toEqual([true, false]);
+    // Each line is erased before it is drawn, never after (xterm would erase a character in the last column).
+    expect(res.stdout).toContain('\x1b[H\x1b[2K\x1b[1m mokkan');
+    expect(res.stdout).not.toContain('\x1b[K');
   });
 
   it('shows the login screen when logged out and quits on Esc without a request', async () => {

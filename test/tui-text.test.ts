@@ -13,6 +13,8 @@ describe('display width', () => {
     expect(displayWidth('🇬🇷')).toBe(2);
     expect(displayWidth('é')).toBe(1);
     expect(displayWidth('')).toBe(0);
+    expect(displayWidth('x')).toBe(1);
+    for (const emoji of ['✅', '⚡', '⏰', '🟢', '🆗']) expect(displayWidth(emoji)).toBe(2);
   });
 
   it('fits text into a width with an ellipsis', () => {

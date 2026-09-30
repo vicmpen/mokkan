@@ -34,7 +34,7 @@ export async function runTerminal(app: TuiApp, io: CliIO, tty: TerminalIO): Prom
     const frame = app.render(size, io.now());
     const cursor = cursorPosition(app.state, size);
     const place = cursor ? `\x1b[${cursor.row};${cursor.column}H\x1b[?25h` : '\x1b[?25l';
-    io.stdout(`\x1b[H${frame.map((l) => `${l}\x1b[K`).join('\r\n')}${place}`);
+    io.stdout(`\x1b[H${frame.map((l) => `\x1b[2K${l}`).join('\r\n')}${place}`);
   };
   const scheduleDraw = (): void => { if (pending === null && !left) pending = setTimeout(draw, 0); };
   const restoreOnExit = (): void => {

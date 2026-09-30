@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { formatWhen } from '../src/statusline.js';
 import { cursorPosition, inputWindow, render } from '../src/tui/screen.js';
 import { initialState, type TuiState } from '../src/tui/state.js';
+import type { Reminder } from '../src/types.js';
 import { displayWidth } from '../src/tui/text.js';
 import { NOW, reminder } from './cli-harness.js';
 
@@ -30,13 +31,14 @@ describe('render: dashboard', () => {
     const raw = render(dashboard(), SIZE, NOW);
     const lines = plain(raw);
     expect(raw).toHaveLength(24);
-    for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(80);
+    for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(79); // the last column stays blank
     for (const l of raw) expect(l.endsWith('\x1b[0m')).toBe(true);
     expect(lines[0].startsWith(' mokkan · a@example.com · 480 cr · api.mokkan.dev')).toBe(true);
     expect(lines[0].endsWith('refreshed 8s ago')).toBe(true);
-    expect(displayWidth(lines[0])).toBe(80);
+    expect(displayWidth(lines[0])).toBe(79);
     expect(lines[1].trimEnd()).toBe(' Active 3 │ All 3 │ Done');
-    expect(lines[2]).toBe('─'.repeat(80));
+    expect(lines[2]).toBe('─'.repeat(79));
+    expect(displayWidth(lines[3])).toBe(79);
     expect(lines[3].startsWith('▸  1  due          check the flaky login test')).toBe(true);
     expect(lines[3].endsWith('overdue 20m')).toBe(true);
     expect(raw[3]).toMatch(/\x1b\[31[;m]/); // red
@@ -56,7 +58,8 @@ describe('render: dashboard', () => {
     const offline = render(dashboard({ error: { kind: 'offline', message: 'x' }, fetchedAt: new Date(NOW.getTime() - 45_000) }), SIZE, NOW);
     expect(strip(offline[0]).endsWith('offline · data 45s old')).toBe(true);
     expect(offline[0]).toContain('\x1b[31m');
-    expect(strip(render(dashboard({ credits: 12 }), SIZE, NOW)[0])).toContain(' · ⚠ 12 cr — mokkan buy · api.mokkan.dev');
+    // One column wider than SIZE: at 80 columns this header fills all 79 drawn columns and the host is shortened.
+    expect(strip(render(dashboard({ credits: 12 }), { columns: 81, rows: 24 }, NOW)[0])).toContain(' · ⚠ 12 cr — mokkan buy · api.mokkan.dev');
     expect(strip(render(dashboard({ credits: null, fetchedAt: null }), SIZE, NOW)[0]).endsWith('loading…')).toBe(true);
     expect(strip(render(dashboard({ credits: null, fetchedAt: null }), SIZE, NOW)[0])).toContain(' mokkan · a@example.com · api.mokkan.dev');
   });
@@ -68,7 +71,7 @@ describe('render: dashboard', () => {
     expect(header).toContain('error: xxx');
     expect(header).toContain('…');
     expect(header.endsWith('· data 45s old')).toBe(true);
-    expect(displayWidth(header)).toBe(80);
+    expect(displayWidth(header)).toBe(79);
   });
 
   it('marks tabs and counts, and shows the Done count once loaded', () => {
@@ -98,12 +101,12 @@ describe('render: dashboard', () => {
   it('truncates text and drops the time column on narrow terminals', () => {
     const narrow = plain(render(dashboard(), { columns: 40, rows: 24 }, NOW));
     expect(narrow[3]).toContain('…');
-    for (const l of narrow) expect(displayWidth(l)).toBeLessThanOrEqual(40);
+    for (const l of narrow) expect(displayWidth(l)).toBeLessThanOrEqual(39);
     const tight = plain(render(dashboard(), { columns: 56, rows: 24 }, NOW));
     expect(tight[3].endsWith('…  overdue 20m')).toBe(true); // at least two columns before the time
     const tiny = plain(render(dashboard(), { columns: 30, rows: 24 }, NOW));
     expect(tiny[3]).not.toContain('overdue');
-    expect(displayWidth(tiny[3])).toBe(30);
+    expect(displayWidth(tiny[3])).toBe(29);
   });
 
   it('never lets a reminder inject escape codes, and keeps wide text inside the width', () => {
@@ -113,7 +116,11 @@ describe('render: dashboard', () => {
     expect(raw[4]).not.toContain('\x1b[31m');
     const wide = reminder({ id: 'w', text: '🚀'.repeat(30), position: 1 });
     const lines = plain(render(dashboard({ reminders: [wide] }), { columns: 40, rows: 24 }, NOW));
-    expect(displayWidth(lines[3])).toBe(40);
+    expect(displayWidth(lines[3])).toBe(39);
+    const odd = reminder({ id: 's', text: 'odd state', state: '\x1b]0;pwned\x07\x1b[2J' as Reminder['state'], position: 1 });
+    const stateLine = render(dashboard({ tab: 'all', reminders: [odd] }), SIZE, NOW)[3];
+    expect(stateLine.replace(/\x1b\[[\d;]*m/g, '')).not.toContain('\x1b'); // only our own colours
+    expect(strip(stateLine)).toContain(' ]0;pwned');
   });
 
   it('draws the input line with the cursor and the confirm line', () => {
@@ -140,7 +147,7 @@ describe('render: dashboard', () => {
   });
 
   it('shows one line when the terminal is too small', () => {
-    expect(plain(render(dashboard(), { columns: 10, rows: 5 }, NOW))).toEqual(['mokkan ui…', '', '', '', '']);
+    expect(plain(render(dashboard(), { columns: 10, rows: 5 }, NOW))).toEqual(['mokkan u…', '', '', '', '']);
     expect(render(dashboard(), { columns: 20, rows: 8 }, NOW)).toHaveLength(8);
     expect(cursorPosition(dashboard({ mode: { kind: 'input', purpose: 'push', label: 'push', hint: '', buffer: '', cursor: 0 } }), { columns: 10, rows: 5 })).toBeNull();
   });
@@ -155,6 +162,7 @@ describe('render: login screen', () => {
     expect(raw).toHaveLength(24);
     expect(lines[0].startsWith(' mokkan · api.mokkan.dev')).toBe(true);
     expect(lines[0].endsWith('not logged in')).toBe(true);
+    expect(displayWidth(lines[0])).toBe(79);
     expect(lines[2].trimEnd()).toBe(' Log in');
     expect(lines[4].trimEnd()).toBe(' Email     › you@example.com');
     expect(lines[5].trimEnd()).toBe(' Password  › •••••••');
