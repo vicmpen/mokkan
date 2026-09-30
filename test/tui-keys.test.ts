@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { KeyDecoder, decodeKeys, PASTE_END, PASTE_START } from '../src/tui/keys.js';
 
 const ch = (c: string) => ({ name: 'char' as const, ch: c });
+const paste = (text: string) => ({ name: 'paste' as const, text });
 
 describe('decodeKeys', () => {
   it('decodes single keys and escape sequences', () => {
@@ -37,24 +38,28 @@ describe('decodeKeys', () => {
     expect(decodeKeys('\x1b[Ax\r')).toEqual([{ name: 'up' }, ch('x'), { name: 'enter' }]);
   });
 
-  it('turns a bracketed paste into characters only, newlines becoming spaces', () => {
-    expect(decodeKeys(`${PASTE_START}a\r\nb\x1b[A\tc${PASTE_END}\r`)).toEqual([
-      ch('a'), ch(' '), ch('b'), ch(' '), ch('c'), { name: 'enter' },
-    ]);
+  it('turns a bracketed paste into one paste key, newlines becoming spaces', () => {
+    expect(decodeKeys(`${PASTE_START}a\r\nb\x1b[A\tc\x01${PASTE_END}\r`)).toEqual([paste('a b c'), { name: 'enter' }]);
+    expect(decodeKeys(`${PASTE_START}xay${PASTE_END}`)).toEqual([paste('xay')]);
   });
 
-  it('keeps a paste open across chunks', () => {
+  it('gives no key for an empty paste', () => {
+    expect(decodeKeys(`${PASTE_START}${PASTE_END}`)).toEqual([]);
+    expect(decodeKeys(`${PASTE_START}\x01\x1b[A${PASTE_END}q`)).toEqual([ch('q')]);
+  });
+
+  it('keeps a paste open across chunks and gives one key when it ends', () => {
     const d = new KeyDecoder();
-    expect(d.feed(`${PASTE_START}one\r`)).toEqual([ch('o'), ch('n'), ch('e'), ch(' ')]);
-    expect(d.feed(`two${PASTE_END}q`)).toEqual([ch('t'), ch('w'), ch('o'), ch('q')]);
+    expect(d.feed(`${PASTE_START}one\r`)).toEqual([]);
+    expect(d.feed(`two${PASTE_END}q`)).toEqual([paste('one two'), ch('q')]);
   });
 
   it('holds back an escape sequence split across chunks', () => {
     const d = new KeyDecoder();
-    expect(d.feed(`${PASTE_START}hi\x1b[20`)).toEqual([ch('h'), ch('i')]);
-    expect(d.feed('1~\r\x03')).toEqual([{ name: 'enter' }, { name: 'ctrl-c' }]);
+    expect(d.feed(`${PASTE_START}hi\x1b[20`)).toEqual([]);
+    expect(d.feed('1~\r\x03')).toEqual([paste('hi'), { name: 'enter' }, { name: 'ctrl-c' }]);
     expect(d.feed('\x1b[2')).toEqual([]);
-    expect(d.feed(`00~a\rb${PASTE_END}`)).toEqual([ch('a'), ch(' '), ch('b')]);
+    expect(d.feed(`00~a\rb${PASTE_END}`)).toEqual([paste('a b')]);
     expect(d.feed('\x1b[')).toEqual([]);
     expect(d.feed('A')).toEqual([{ name: 'up' }]);
   });

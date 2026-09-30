@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MokkanClient } from '../src/client.js';
 import { clearCredentials, credentialsPath, saveCredentials } from '../src/credentials.js';
 import { TuiApp } from '../src/tui/app.js';
-import { decodeKeys } from '../src/tui/keys.js';
+import { decodeKeys, PASTE_END, PASTE_START } from '../src/tui/keys.js';
 import { CliHarness, NOW } from './cli-harness.js';
 import { FakeServer, tokenPair, type FakeAccount } from './fake-server.js';
 
@@ -213,6 +213,38 @@ describe('TuiApp actions', () => {
     await type(app, '\x1b');
     expect(app.state.mode).toEqual({ kind: 'normal' });
     expect(server.count('POST', '/reminders')).toBe(0);
+  });
+
+  it('inserts a paste into the input line at the cursor in one step, newlines as spaces', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'pac\x1b[D');
+    await type(app, `${PASTE_START}x🚀\r\ny${PASTE_END}`);
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', buffer: 'ax🚀 yc', cursor: 5 });
+    expect(server.count('POST', '/reminders')).toBe(0);
+  });
+
+  it('ignores a paste in normal mode', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    const before = server.requests.length;
+    await type(app, `${PASTE_START}xay${PASTE_END}`);
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(app.state.message).toBeNull();
+    expect(server.requests).toHaveLength(before);
+  });
+
+  it('does not confirm a pop with a pasted y', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'x');
+    await type(app, `${PASTE_START}y${PASTE_END}`);
+    expect(app.state.mode.kind).toBe('confirm');
+    expect(server.count('POST', '/reminders/pop')).toBe(0);
+    expect(acct.reminders.get(ID2)?.state).toBe('delivered');
   });
 
   it('sends nothing for an empty submit, and quits on Ctrl-C even while typing', async () => {
@@ -459,6 +491,13 @@ describe('TuiApp login screen', () => {
     await type(app, 'q'); // a letter here, not quit
     expect(app.exitCode).toBeNull();
     expect(app.state.login.password).toBe('q');
+  });
+
+  it('inserts a paste into the active field', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    await type(app, 'you.com\x1b[D\x1b[D\x1b[D\x1b[D');
+    await type(app, `${PASTE_START}@example${PASTE_END}`);
+    expect(app.state.login).toMatchObject({ field: 'email', email: 'you@example.com', cursor: 11 });
   });
 
   it('rejects an empty email or password locally', async () => {

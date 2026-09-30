@@ -43,6 +43,12 @@ export function editLine(line: { buffer: string; cursor: number }, key: Key): bo
     case 'delete': chars.splice(line.cursor, 1); break;
     case 'ctrl-u': chars.length = 0; line.cursor = 0; break;
     case 'char': chars.splice(line.cursor, 0, key.ch); line.cursor += 1; break;
+    case 'paste': {
+      const added = [...key.text];
+      chars.splice(line.cursor, 0, ...added);
+      line.cursor += added.length;
+      break;
+    }
     default: return false;
   }
   line.buffer = chars.join('');
@@ -89,6 +95,7 @@ export class TuiApp {
     const s = this.state;
     if (s.screen === 'login') return this.loginKey(key);
     if (s.mode.kind === 'input') return this.inputKey(s.mode, key);
+    if (key.name === 'paste') return Promise.resolve(); // pasted text never runs commands
     if (s.mode.kind === 'confirm') return this.confirmKey(s.mode, key);
     return this.normalKey(key);
   }

@@ -1,6 +1,7 @@
 export type KeyName = 'up' | 'down' | 'left' | 'right' | 'home' | 'end' | 'enter' | 'escape' | 'tab'
   | 'backspace' | 'delete' | 'ctrl-c' | 'ctrl-u';
-export type Key = { name: KeyName } | { name: 'char'; ch: string };
+/** `paste`: the whole of one bracketed paste, cleaned to one line of text; only input fields accept it. */
+export type Key = { name: KeyName } | { name: 'char'; ch: string } | { name: 'paste'; text: string };
 
 /** Bracketed paste markers (the driver enables the mode with `\x1b[?2004h`). */
 export const PASTE_START = '\x1b[200~';
@@ -21,14 +22,16 @@ const isControl = (cp: number): boolean => cp < 0x20 || (cp >= 0x7f && cp <= 0x9
 const INCOMPLETE_TAIL = /\x1b(?:\[[\x20-\x3f]*|O)?$/;
 
 /**
- * Turns raw terminal input into key events. Stateful for two things that may span chunks. Inside a bracketed paste
- * everything is text (newlines become spaces), so pasted text can never run commands. An escape sequence cut off at
+ * Turns raw terminal input into key events. Stateful for two things that may span chunks. A bracketed paste becomes
+ * one `paste` key when its end marker arrives (newlines become spaces), so pasted text can never run commands: only
+ * input fields accept it. An escape sequence cut off at
  * the end of a chunk (including half a paste marker) is held back until the next chunk completes it, or until
  * `flush()`, which the driver calls on a short timer so a real Esc press still arrives. A complete escape sequence
  * we do not recognize (PageUp, F1, Ctrl-Up) gives no key, so it never acts as Esc.
  */
 export class KeyDecoder {
-  private inPaste = false;
+  /** The cleaned text of the paste being read, or null outside a paste. */
+  private paste: string | null = null;
   /** The incomplete escape sequence held back from the end of the last chunk. */
   private pending = '';
 
@@ -53,17 +56,18 @@ export class KeyDecoder {
     const keys: Key[] = [];
     let i = 0;
     while (i < chunk.length) {
-      if (this.inPaste) {
+      if (this.paste !== null) {
         const end = chunk.indexOf(PASTE_END, i);
-        keys.push(...pasteChars(end === -1 ? chunk.slice(i) : chunk.slice(i, end)));
+        this.paste += pasteText(end === -1 ? chunk.slice(i) : chunk.slice(i, end));
         if (end === -1) return keys;
-        this.inPaste = false;
+        if (this.paste !== '') keys.push({ name: 'paste', text: this.paste });
+        this.paste = null;
         i = end + PASTE_END.length;
         continue;
       }
       const c = chunk[i];
       if (c === '\x1b') {
-        if (chunk.startsWith(PASTE_START, i)) { this.inPaste = true; i += PASTE_START.length; continue; }
+        if (chunk.startsWith(PASTE_START, i)) { this.paste = ''; i += PASTE_START.length; continue; }
         const seq = Object.keys(SEQUENCES).find((s) => chunk.startsWith(s, i));
         if (seq) { keys.push({ name: SEQUENCES[seq] }); i += seq.length; continue; }
         if (chunk[i + 1] !== '[' && chunk[i + 1] !== 'O') keys.push({ name: 'escape' });
@@ -82,22 +86,22 @@ export class KeyDecoder {
 }
 
 /**
- * Pasted text as characters only: `\r\n`, `\r`, `\n` and `\t` each become one space; escape sequences and other
- * controls are dropped.
+ * Pasted text as one line: `\r\n`, `\r`, `\n` and `\t` each become one space; escape sequences and other controls
+ * are dropped.
  */
-function pasteChars(text: string): Key[] {
-  const keys: Key[] = [];
+function pasteText(text: string): string {
+  let out = '';
   let i = 0;
   while (i < text.length) {
     if (text[i] === '\x1b') { i += unknownSequenceLength(text, i); continue; }
-    if (text.startsWith('\r\n', i)) { keys.push({ name: 'char', ch: ' ' }); i += 2; continue; }
+    if (text.startsWith('\r\n', i)) { out += ' '; i += 2; continue; }
     const cp = text.codePointAt(i)!;
     const c = String.fromCodePoint(cp);
     i += c.length;
-    if (c === '\r' || c === '\n' || c === '\t') keys.push({ name: 'char', ch: ' ' });
-    else if (!isControl(cp)) keys.push({ name: 'char', ch: c });
+    if (c === '\r' || c === '\n' || c === '\t') out += ' ';
+    else if (!isControl(cp)) out += c;
   }
-  return keys;
+  return out;
 }
 
 /**
