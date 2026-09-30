@@ -1453,7 +1453,7 @@ function installCopy(source, target) {
 }
 var NpxCliError = class extends Error {
   constructor(file) {
-    super(`mokkan is running from npx's temporary cache (${file}), which npm may delete at any time, so a status line must not point there. Run /mokkan:mokkan statusline in Claude Code (with the mokkan plugin), or npm i -g mokkan first and then mokkan statusline.`);
+    super(`mokkan is running from npx's temporary cache (${file}), which npm may delete at any time, so a status line must not point there. Run /mokkan:mokkan statusline in Claude Code (with the mokkan plugin), or npm i -g @vicmpen/mokkan-cli first and then mokkan statusline.`);
   }
 };
 function resolveCliLocation(running, env, write) {

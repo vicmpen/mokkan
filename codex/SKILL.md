@@ -5,7 +5,7 @@ description: Cross-session reminders through the `mokkan` CLI. Use at the start 
 
 # mokkan — cross-session reminders
 
-The `mokkan` CLI talks to the user's reminder server. Codex has no lifecycle hooks, so this skill replaces them. If `mokkan` is not found, tell the user to install it with `npm i -g mokkan` (Node.js 20.3 or later) and stop there:
+The `mokkan` CLI talks to the user's reminder server. Codex has no lifecycle hooks, so this skill replaces them. If `mokkan` is not found, tell the user to install it with `npm i -g @vicmpen/mokkan-cli` (Node.js 20.3 or later) and stop there:
 
 1. **At the start of a task**, run `mokkan heartbeat --source codex` and then `mokkan pending`. If `mokkan pending` prints reminders, show them to the user verbatim (keep the `[id]` tags) and tell them they can acknowledge with `mokkan ack <id>` or `mokkan ack all`.
 2. **Before finishing a task**, run `mokkan heartbeat --source codex && mokkan pending` again and relay anything new.
