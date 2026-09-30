@@ -122,7 +122,7 @@ describe('render: dashboard', () => {
     expect(lines[22].trimEnd()).toBe(' push › call');
     expect(lines[23].trimEnd()).toBe(' Enter to push (1 credit) · Esc to cancel');
     expect(cursorPosition(input, SIZE)).toEqual({ row: 23, column: 13 });
-    const confirm = dashboard({ mode: { kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n' } });
+    const confirm = dashboard({ mode: { kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n', version: 3 } });
     const c = plain(render(confirm, SIZE, NOW));
     expect(c[22].trimEnd()).toBe(' Pop "second"? y/n');
     expect(c[23]).toBe('');
