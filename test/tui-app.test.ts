@@ -126,6 +126,18 @@ describe('TuiApp core', () => {
     expect(app.rows()[2].id).toBe(ID1);
   });
 
+  it('keeps navigation made while a refresh is in flight', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    let pressed: Promise<void> | undefined;
+    acct.afterList = () => { pressed ??= type(app, 'j'); }; // the server has the list request, the app awaits it
+    await app.refresh();
+    await pressed;
+    expect(app.state.selected).toBe(1);
+    expect(app.rows()[1].id).toBe(ID1);
+  });
+
   it('keeps the last list and reports offline when the server goes away', async () => {
     seed(server);
     const app = makeApp(server, h);

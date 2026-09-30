@@ -137,21 +137,23 @@ export class TuiApp {
   private async doRefresh(): Promise<void> {
     const s = this.state;
     if (s.screen !== 'dashboard' || this.exitCode !== null) return;
-    const keep = this.rows()[s.selected]?.id;
     s.refreshing = true;
     this.changed();
     try {
-      const [list, me] = await Promise.all([
+      const [list, me, , done] = await Promise.all([
         this.client.list('all'),
         this.client.me().catch(() => null),
         this.client.heartbeat('ui').catch(() => null),
+        s.tab === 'done' ? this.client.list('done') : null,
       ]);
+      // No await from here to the selection restore, so keys pressed while the requests ran are kept.
+      const keep = this.rows()[s.selected]?.id;
       s.reminders = list.reminders;
       s.version = list.version;
       s.fetchedAt = this.now();
       s.error = null;
       if (typeof me?.credit_balance === 'number') s.credits = me.credit_balance;
-      if (s.tab === 'done') s.done = (await this.client.list('done')).reminders;
+      if (done) s.done = done.reminders;
       const idx = keep === undefined ? -1 : this.rows().findIndex((r) => r.id === keep);
       if (idx !== -1) s.selected = idx;
       this.clampSelection();
