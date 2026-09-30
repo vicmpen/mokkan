@@ -173,3 +173,219 @@ describe('TuiApp core', () => {
     expect(app.exitCode).toBe(0);
   });
 });
+
+describe('TuiApp actions', () => {
+  let server: FakeServer;
+  let h: CliHarness;
+  beforeEach(async () => { server = new FakeServer(); await server.start(); h = new CliHarness(); });
+  afterEach(async () => { await server.stop(); h.dispose(); });
+
+  it('pushes typed text and reports it', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'p');
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', label: 'push', buffer: '', cursor: 0 });
+    expect(app.state.message).toBeNull();
+    await type(app, 'call mom\r');
+    expect(server.last('POST', '/reminders')?.body).toEqual({ text: 'call mom' });
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(app.state.message).toEqual({ text: 'Pushed [fake0001] call mom', tone: 'green' });
+    expect(app.rows()[0].text).toBe('call mom');
+    expect(app.state.credits).toBe(99);
+  });
+
+  it('edits the input line: cursor keys, backspace, delete, ctrl-u, escape', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'pabc\x1b[D\x1b[DX');
+    expect(app.state.mode).toMatchObject({ buffer: 'aXbc', cursor: 2 });
+    await type(app, '\x7f\x1b[3~');
+    expect(app.state.mode).toMatchObject({ buffer: 'ac', cursor: 1 });
+    await type(app, '\x1b[H\x1b[F🚀');
+    expect(app.state.mode).toMatchObject({ buffer: 'ac🚀', cursor: 3 });
+    await type(app, '\x15');
+    expect(app.state.mode).toMatchObject({ buffer: '', cursor: 0 });
+    await type(app, 'j\t');
+    expect(app.state.mode).toMatchObject({ buffer: 'j' }); // navigation keys are text or ignored while typing
+    expect(app.state.selected).toBe(0);
+    await type(app, '\x1b');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(server.count('POST', '/reminders')).toBe(0);
+  });
+
+  it('sends nothing for an empty submit, and quits on Ctrl-C even while typing', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'p   \r');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(server.count('POST', '/reminders')).toBe(0);
+    await type(app, 'pabc\x03');
+    expect(app.exitCode).toBe(0);
+  });
+
+  it('schedules with a duration, keeping the input open on a bad one', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'isoon call mom\r');
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'in', buffer: 'soon call mom' });
+    expect(app.state.message).toEqual({ text: 'Invalid duration "soon" (examples: 30s, 10m, 2h, 1d, 1h30m)', tone: 'red' });
+    await type(app, '\x152h\r');
+    expect(app.state.message).toEqual({ text: 'Add the reminder text after the duration.', tone: 'red' });
+    await type(app, ' call mom\r');
+    expect(server.last('POST', '/reminders')?.body).toEqual({ text: 'call mom', due_at: '2026-09-28T14:00:00.000Z' });
+    expect(app.state.message).toEqual({ text: 'Scheduled [fake0001] "call mom" for 2026-09-28T14:00:00.000Z (in 2h)', tone: 'green' });
+  });
+
+  it('edits the selected text, prefilled, and skips the request when unchanged', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'e');
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'edit', label: 'edit [bbbb2222]', buffer: 'second', cursor: 6, targetId: ID2 });
+    await type(app, '\r');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(app.state.message).toEqual({ text: 'Unchanged.', tone: 'dim' });
+    expect(server.requests.filter((r) => r.method === 'PATCH')).toHaveLength(0);
+    await type(app, 'e draft\r');
+    expect(server.last('PATCH', `/reminders/${ID2}`)?.body).toEqual({ text: 'second draft', expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'Edited [bbbb2222] second draft', tone: 'green' });
+  });
+
+  it('changes and clears the time of a scheduled reminder, and explains a not-editable one', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 't2h\r'); // ID2 is delivered by now: the fake answers 409 not_editable
+    expect(server.last('PATCH', `/reminders/${ID2}`)?.body).toEqual({ due_at: '2026-09-28T14:00:00.000Z', expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'This reminder was already shown or emailed, so its time can no longer be changed.', tone: 'red' });
+    await type(app, '\t'); // All tab: row 1 is the scheduled ID3
+    await type(app, 't');
+    expect(app.state.mode).toMatchObject({ purpose: 'time', label: 'time [3000cccc]', targetId: ID3, buffer: '' });
+    await type(app, '2h\r');
+    expect(server.last('PATCH', `/reminders/${ID3}`)?.body).toEqual({ due_at: '2026-09-28T14:00:00.000Z', expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'Edited [3000cccc] later (due 2026-09-28T14:00:00.000Z, in 2h)', tone: 'green' });
+    await type(app, 'tclear\r');
+    expect(server.last('PATCH', `/reminders/${ID3}`)?.body).toEqual({ due_at: null, expected_version: 9 });
+    expect(app.state.message).toEqual({ text: 'Edited [3000cccc] later (time cleared)', tone: 'green' });
+    await type(app, 'tnever\r');
+    expect(app.state.mode).toMatchObject({ purpose: 'time', buffer: 'never' });
+    expect(app.state.message?.tone).toBe('red');
+  });
+
+  it('refuses e, t and a without a usable selection', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, '\t\t'); // Done tab
+    await type(app, 'e');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(app.state.message).toEqual({ text: 'Switch to Active or All to change reminders.', tone: 'yellow' });
+    const empty = makeApp(server, h);
+    server.withAccount();
+    await empty.refresh();
+    await type(empty, 'a');
+    expect(empty.state.message).toEqual({ text: 'Nothing selected.', tone: 'yellow' });
+    await type(empty, 'x');
+    expect(empty.state.mode).toEqual({ kind: 'normal' });
+    expect(empty.state.message).toEqual({ text: 'List is empty.', tone: 'plain' });
+  });
+
+  it('pops the top after confirmation with the version adopted from delivery, and cancels on any other key', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'xn');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(server.count('POST', '/reminders/pop')).toBe(0);
+    await type(app, 'x');
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', prompt: 'Pop "second"? y/n' });
+    await type(app, 'y');
+    expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 8 });
+    expect(acct.reminders.get(ID2)?.state).toBe('done');
+    expect(app.state.message).toEqual({ text: 'Popped [bbbb2222] second', tone: 'green' });
+    expect(app.rows().map((r) => r.id)).toEqual([ID1]);
+  });
+
+  it('dequeues the bottom after confirmation', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'd');
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', prompt: 'Dequeue "first"? y/n' });
+    await type(app, 'y');
+    expect(server.last('POST', '/reminders/dequeue')?.body).toEqual({ expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'Dequeued [aaaa1111] first', tone: 'green' });
+  });
+
+  it('refreshes and asks to retry when the list changed under a pop', async () => {
+    const acct = seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    acct.version += 1;
+    await type(app, 'xy');
+    expect(acct.reminders.get(ID2)?.state).toBe('delivered');
+    expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
+    expect(app.state.version).toBe(9);
+  });
+
+  it('acknowledges the selected reminder and all of them', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'ja');
+    expect(server.last('POST', '/reminders/ack')?.body).toEqual({ ids: [ID1], expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'Acknowledged 1 reminder(s).', tone: 'green' });
+    await type(app, 'A');
+    expect(server.last('POST', '/reminders/ack')?.body).toEqual({ all: true });
+    expect(app.state.message).toEqual({ text: 'Acknowledged 1 reminder(s).', tone: 'green' });
+    expect(app.rows().every((r) => r.state === 'acknowledged')).toBe(true);
+  });
+
+  it('shows the credit error when a push is refused', async () => {
+    seed(server, 0);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, 'pcall mom\r');
+    expect(app.state.message?.tone).toBe('red');
+    expect(app.state.message?.text).toContain('Not enough credits');
+    expect(app.state.message?.text).toContain('mokkan buy');
+  });
+
+  it('runs a push typed during a refresh after it, in order', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    const first = app.refresh();
+    await type(app, 'p');
+    const typed = type(app, 'hello\r');
+    await first;
+    await typed;
+    const order = server.requests.filter((r) => r.method === 'POST' && (r.path === '/reminders' || r.path === '/reminders/deliver')).map((r) => r.path);
+    expect(order.slice(0, 2)).toEqual(['/reminders/deliver', '/reminders']);
+    expect(app.rows()[0].text).toBe('hello');
+  });
+
+  it('opens a trusted checkout link, shows an untrusted one without opening, and reports missing billing', async () => {
+    seed(server);
+    const opened: string[] = [];
+    const app = makeApp(server, h, { opened });
+    await app.refresh();
+    await type(app, 'b');
+    expect(server.count('POST', '/billing/checkout')).toBe(1);
+    expect(opened).toEqual(['https://checkout.stripe.com/c/pay/cs_test_fake']);
+    expect(app.state.message).toEqual({
+      text: 'Checkout: https://checkout.stripe.com/c/pay/cs_test_fake · opening in your browser When the payment completes, the balance updates on the next refresh.',
+      tone: 'plain',
+    });
+    server.withAccount({ checkoutUrl: 'https://evil.example/pay' });
+    await type(app, 'b');
+    expect(opened).toHaveLength(1);
+    expect(app.state.message?.text).toContain('Checkout: https://evil.example/pay · not opened: not a Stripe Checkout address');
+    server.on('POST', '/billing/checkout', () => ({ status: 404, body: { error: 'not_found', message: 'no' } }));
+    await type(app, 'b');
+    expect(app.state.message).toEqual({ text: 'Billing is not enabled on this server.', tone: 'red' });
+  });
+});

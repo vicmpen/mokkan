@@ -1,9 +1,16 @@
 import { ApiError, NetworkError, apiErrorHint, type MokkanClient } from '../client.js';
+import { isTrustedCheckoutUrl } from '../commands/billing.js';
+import { parseDuration } from '../duration.js';
 import { SessionExpiredError } from '../errors.js';
-import type { DeliverResponse, Reminder } from '../types.js';
+import { formatRelative, shortId } from '../format.js';
+import { cleanText } from '../statusline.js';
+import type { CheckoutResponse, DeliverResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';
-import { initialState, rowsOf, emptyLogin, type Size, type Tab, type Tone, type TuiState } from './state.js';
+import {
+  initialState, rowsOf, emptyLogin, ACTIVE_STATES,
+  type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tab, type Tone, type TuiState,
+} from './state.js';
 
 export const REFRESH_INTERVAL_MS = 10_000;
 const TABS: Tab[] = ['active', 'all', 'done'];
@@ -23,6 +30,24 @@ export function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Applies an editing key to a one-line buffer (cursor in code points). Returns false for keys it does not handle. */
+export function editLine(line: { buffer: string; cursor: number }, key: Key): boolean {
+  const chars = [...line.buffer];
+  switch (key.name) {
+    case 'left': line.cursor = Math.max(0, line.cursor - 1); break;
+    case 'right': line.cursor = Math.min(chars.length, line.cursor + 1); break;
+    case 'home': line.cursor = 0; break;
+    case 'end': line.cursor = chars.length; break;
+    case 'backspace': if (line.cursor > 0) { chars.splice(line.cursor - 1, 1); line.cursor -= 1; } break;
+    case 'delete': chars.splice(line.cursor, 1); break;
+    case 'ctrl-u': chars.length = 0; line.cursor = 0; break;
+    case 'char': chars.splice(line.cursor, 0, key.ch); line.cursor += 1; break;
+    default: return false;
+  }
+  line.buffer = chars.join('');
+  return true;
+}
+
 /**
  * The dashboard's state machine. Every server call runs through one queue, so a timed refresh can never
  * interleave with a pop. Nothing thrown by the server escapes: it becomes the message line, or the login screen.
@@ -39,10 +64,12 @@ export class TuiApp {
   private readonly delivered = new Set<string>();
   private readonly client: MokkanClient;
   private readonly now: () => Date;
+  private readonly openUrl: ((url: string) => void) | undefined;
 
   constructor(opts: TuiAppOptions) {
     this.client = opts.client;
     this.now = opts.now;
+    this.openUrl = opts.openUrl;
     this.state = initialState(opts.email, opts.host);
   }
 
@@ -58,7 +85,10 @@ export class TuiApp {
   refresh(): Promise<void> { return this.enqueue(() => this.doRefresh()); }
 
   handleKey(key: Key): Promise<void> {
-    if (this.state.screen === 'login') return this.loginKey(key);
+    const s = this.state;
+    if (s.screen === 'login') return this.loginKey(key);
+    if (s.mode.kind === 'input') return this.inputKey(s.mode, key);
+    if (s.mode.kind === 'confirm') return this.confirmKey(s.mode, key);
     return this.normalKey(key);
   }
 
@@ -71,6 +101,25 @@ export class TuiApp {
     if (key.name === 'end') return this.move(Infinity);
     if (key.name === 'tab') return this.nextTab();
     if (ch === 'r') return this.refresh();
+    if (ch === 'p') return this.startInput('push', 'push', 'Enter to push (1 credit) · Esc to cancel');
+    if (ch === 'i') return this.startInput('in', 'in', '<duration> <text>, e.g. 2h call the bank · Enter to schedule · Esc to cancel');
+    if (ch === 'e') {
+      const r = this.selectedReminder();
+      if (!r) return Promise.resolve();
+      // Control characters from the server never reach the input line; Enter without changes stays "Unchanged."
+      const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
+      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (counts as one edit) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text });
+    }
+    if (ch === 't') {
+      const r = this.selectedReminder();
+      if (!r) return Promise.resolve();
+      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" · Enter to save (counts as one edit) · Esc to cancel', { targetId: r.id });
+    }
+    if (ch === 'a') return this.ackSelected();
+    if (ch === 'A') return this.ackAll();
+    if (ch === 'x') return this.startConfirm('pop');
+    if (ch === 'd') return this.startConfirm('dequeue');
+    if (ch === 'b') return this.buy();
     return Promise.resolve();
   }
 
@@ -105,6 +154,167 @@ export class TuiApp {
       s.done = (await this.client.list('done')).reminders;
       this.clampSelection();
       this.changed();
+    });
+  }
+
+  private activeRows(): Reminder[] {
+    return this.state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
+  }
+
+  /** The selected reminder for e, t and a; sets the message and returns null when there is none to change. */
+  private selectedReminder(): Reminder | null {
+    const s = this.state;
+    if (s.tab === 'done') { this.say('Switch to Active or All to change reminders.', 'yellow'); return null; }
+    const r = this.rows()[s.selected];
+    if (!r) { this.say('Nothing selected.', 'yellow'); return null; }
+    return r;
+  }
+
+  private startInput(purpose: InputPurpose, label: string, hint: string, extra: Partial<InputMode> = {}): Promise<void> {
+    const buffer = extra.buffer ?? '';
+    this.state.message = null;
+    this.state.mode = { kind: 'input', purpose, label, hint, buffer, cursor: [...buffer].length, ...extra };
+    this.changed();
+    return Promise.resolve();
+  }
+
+  private inputKey(mode: InputMode, key: Key): Promise<void> {
+    if (key.name === 'ctrl-c') return this.quit();
+    if (key.name === 'escape') { this.state.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
+    if (key.name === 'enter') return this.submitInput(mode);
+    if (editLine(mode, key)) this.changed();
+    return Promise.resolve();
+  }
+
+  private submitInput(mode: InputMode): Promise<void> {
+    const s = this.state;
+    const text = mode.buffer.trim();
+    if (text === '') { s.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
+    const version = s.version ?? undefined;
+    switch (mode.purpose) {
+      case 'push':
+        return this.action(async () => {
+          const res = await this.client.push(text);
+          this.say(`Pushed [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+        });
+      case 'in': {
+        const space = text.search(/\s/);
+        const word = space === -1 ? text : text.slice(0, space);
+        const rest = space === -1 ? '' : text.slice(space + 1).trim();
+        const seconds = this.parseDurationOrSay(word);
+        if (seconds === null) return Promise.resolve();
+        if (rest === '') { this.say('Add the reminder text after the duration.', 'red'); return Promise.resolve(); }
+        const now = this.now();
+        const dueAt = new Date(now.getTime() + seconds * 1000);
+        if (!Number.isFinite(dueAt.getTime())) { this.say('duration is too large', 'red'); return Promise.resolve(); }
+        return this.action(async () => {
+          const res = await this.client.push(rest, dueAt);
+          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})`, 'green');
+        });
+      }
+      case 'edit':
+        if (text === mode.originalText) { s.mode = { kind: 'normal' }; this.say('Unchanged.', 'dim'); return Promise.resolve(); }
+        return this.action(async () => {
+          const res = await this.client.editReminder(mode.targetId!, { text }, version);
+          this.say(`Edited [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+        });
+      case 'time': {
+        let dueAt: Date | null = null;
+        if (text !== 'clear') {
+          const seconds = this.parseDurationOrSay(text);
+          if (seconds === null) return Promise.resolve();
+          dueAt = new Date(this.now().getTime() + seconds * 1000);
+          if (!Number.isFinite(dueAt.getTime())) { this.say('duration is too large', 'red'); return Promise.resolve(); }
+        }
+        const now = this.now();
+        return this.action(async () => {
+          const res = await this.client.editReminder(mode.targetId!, { due_at: dueAt }, version);
+          const r = res.reminder;
+          const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : '(time cleared)';
+          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, 'green');
+        });
+      }
+    }
+  }
+
+  /** `parseDuration`, with its error shown in the message line (the input stays open). */
+  private parseDurationOrSay(word: string): number | null {
+    try {
+      return parseDuration(word);
+    } catch (err) {
+      this.say(errorText(err), 'red');
+      return null;
+    }
+  }
+
+  /** Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`. */
+  private action(work: () => Promise<void>): Promise<void> {
+    this.state.mode = { kind: 'normal' };
+    this.changed();
+    return this.enqueue(async () => {
+      try {
+        await work();
+      } catch (err) {
+        await this.fail(err);
+        return;
+      }
+      await this.doRefresh();
+    });
+  }
+
+  private startConfirm(action: 'pop' | 'dequeue'): Promise<void> {
+    const list = this.activeRows();
+    const target = action === 'pop' ? list[0] : list[list.length - 1];
+    if (!target) { this.say('List is empty.'); return Promise.resolve(); }
+    this.state.message = null;
+    this.state.mode = { kind: 'confirm', action, prompt: `${action === 'pop' ? 'Pop' : 'Dequeue'} "${target.text}"? y/n` };
+    this.changed();
+    return Promise.resolve();
+  }
+
+  private confirmKey(mode: ConfirmMode, key: Key): Promise<void> {
+    if (key.name === 'ctrl-c') return this.quit();
+    if (key.name !== 'char' || key.ch !== 'y') { this.state.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
+    const version = this.state.version ?? undefined;
+    return this.action(async () => {
+      const res = mode.action === 'pop' ? await this.client.pop(version) : await this.client.dequeue(version);
+      this.say(`${mode.action === 'pop' ? 'Popped' : 'Dequeued'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+    });
+  }
+
+  private ackSelected(): Promise<void> {
+    const r = this.selectedReminder();
+    if (!r) return Promise.resolve();
+    const version = this.state.version ?? undefined;
+    return this.action(async () => {
+      const res = await this.client.ack([r.id], version);
+      this.say(`Acknowledged ${res.acknowledged.length} reminder(s).`, 'green');
+    });
+  }
+
+  private ackAll(): Promise<void> {
+    return this.action(async () => {
+      const res = await this.client.ack('all');
+      this.say(`Acknowledged ${res.acknowledged.length} reminder(s).`, 'green');
+    });
+  }
+
+  /** Same rules as `mokkan buy`: only a Stripe Checkout address is opened; the link is always shown. */
+  private buy(): Promise<void> {
+    return this.action(async () => {
+      let res: CheckoutResponse;
+      try {
+        res = await this.client.checkout();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) { this.say('Billing is not enabled on this server.', 'red'); return; }
+        throw err;
+      }
+      let how = '· open it in your browser';
+      if (!isTrustedCheckoutUrl(res.url)) how = '· not opened: not a Stripe Checkout address';
+      else if (this.openUrl) {
+        try { this.openUrl(res.url); how = '· opening in your browser'; } catch { /* the link is shown anyway */ }
+      }
+      this.say(`Checkout: ${res.url} ${how} When the payment completes, the balance updates on the next refresh.`);
     });
   }
 
