@@ -26,7 +26,7 @@ export interface StatusOptions {
 }
 
 const DEFAULT_TTL_SECONDS = 30;
-const DEFAULT_GRACE_MINUTES = 15;
+export const DEFAULT_GRACE_MINUTES = 15;
 /** A cold render (no cache) waits this long for the server: Claude Code cancels slow status line commands. */
 const COLD_FETCH_TIMEOUT_MS = 800;
 const REFRESH_TIMEOUT_MS = 3000;
@@ -76,9 +76,9 @@ function positiveInt(raw: string | undefined): number | undefined {
 /** Below this many credits the status line warns. */
 const LOW_CREDITS = 20;
 
-type Tone = 'red' | 'yellow' | 'green' | 'dim' | 'plain';
+export type Tone = 'red' | 'yellow' | 'green' | 'dim' | 'plain';
 /** `keep`: shown in full while the width allows; other segments are shortened first (the credit warning must survive). */
-interface Segment { text: string; tone: Tone; keep?: boolean }
+export interface Segment { text: string; tone: Tone; keep?: boolean }
 
 /** Strips control characters (a reminder must not be able to inject terminal escapes), collapses whitespace, caps length. */
 export function cleanText(text: string, max = MAX_TEXT): string {
@@ -87,7 +87,7 @@ export function cleanText(text: string, max = MAX_TEXT): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-function formatAge(ms: number): string {
+export function formatAge(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s >= 86400) return `${Math.floor(s / 86400)}d`;
   if (s >= 3600) return `${Math.floor(s / 3600)}h`;
@@ -159,7 +159,7 @@ function cacheSegments(cache: StatusCache, now: Date, opts: StatusOptions): Segm
 }
 
 /** ` · 480 cr`, or ` · ⚠ 12 cr — mokkan buy` below the threshold. Nothing when the server reports no balance. */
-function creditSegments(balance: unknown): Segment[] {
+export function creditSegments(balance: unknown): Segment[] {
   if (typeof balance !== 'number' || !Number.isFinite(balance)) return [];
   if (balance >= LOW_CREDITS) return [{ text: ` · ${balance} cr`, tone: 'dim', keep: true }];
   return [{ text: ` · ⚠ ${balance} cr — mokkan buy`, tone: balance <= 0 ? 'red' : 'yellow', keep: true }];

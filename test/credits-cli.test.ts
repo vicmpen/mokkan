@@ -127,8 +127,10 @@ describe('credits in the CLI', () => {
   });
   it('other 4xx errors keep exit 1', async () => {
     server.withAccount({ balance: 5 });
+    server.on('POST', '/reminders/pop', () => ({ status: 403, body: { error: 'forbidden', message: 'nope' } }));
     const r = await run(['pop']);
     expect(r.code).toBe(1);
+    expect(r.stderr).toContain('nope');
   });
 
   it('statusline keeps the last balance when only /me fails', async () => {
