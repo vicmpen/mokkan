@@ -17,15 +17,39 @@ const SINGLE: Record<string, KeyName> = {
 };
 
 const isControl = (cp: number): boolean => cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
+/** An escape sequence cut off at the end of the input: a lone ESC, `ESC [` plus parameter bytes, or `ESC O`. */
+const INCOMPLETE_TAIL = /\x1b(?:\[[\x20-\x3f]*|O)?$/;
 
 /**
- * Turns raw terminal input into key events. Stateful only for bracketed paste, which may arrive in several
- * chunks: inside a paste everything is text (newlines become spaces), so pasted text can never run commands.
+ * Turns raw terminal input into key events. Stateful for two things that may span chunks. Inside a bracketed paste
+ * everything is text (newlines become spaces), so pasted text can never run commands. An escape sequence cut off at
+ * the end of a chunk (including half a paste marker) is held back until the next chunk completes it, or until
+ * `flush()`, which the driver calls on a short timer so a real Esc press still arrives. A complete escape sequence
+ * we do not recognize (PageUp, F1, Ctrl-Up) gives no key, so it never acts as Esc.
  */
 export class KeyDecoder {
   private inPaste = false;
+  /** The incomplete escape sequence held back from the end of the last chunk. */
+  private pending = '';
 
   feed(chunk: string): Key[] {
+    const input = this.pending + chunk;
+    const tail = INCOMPLETE_TAIL.exec(input)?.[0] ?? '';
+    this.pending = tail;
+    return this.decode(input.slice(0, input.length - tail.length));
+  }
+
+  /**
+   * Decodes the held-back tail as if the input ended there: a lone ESC is `escape`, an incomplete sequence is
+   * dropped.
+   */
+  flush(): Key[] {
+    const rest = this.pending;
+    this.pending = '';
+    return this.decode(rest);
+  }
+
+  private decode(chunk: string): Key[] {
     const keys: Key[] = [];
     let i = 0;
     while (i < chunk.length) {
@@ -42,7 +66,7 @@ export class KeyDecoder {
         if (chunk.startsWith(PASTE_START, i)) { this.inPaste = true; i += PASTE_START.length; continue; }
         const seq = Object.keys(SEQUENCES).find((s) => chunk.startsWith(s, i));
         if (seq) { keys.push({ name: SEQUENCES[seq] }); i += seq.length; continue; }
-        keys.push({ name: 'escape' });
+        if (chunk[i + 1] !== '[' && chunk[i + 1] !== 'O') keys.push({ name: 'escape' });
         i += unknownSequenceLength(chunk, i);
         continue;
       }
@@ -76,7 +100,10 @@ function pasteChars(text: string): Key[] {
   return keys;
 }
 
-/** Length of an ESC-led sequence we do not know: `ESC [ params final`, `ESC O x`, or a lone ESC. */
+/**
+ * Length of the ESC-led sequence at `at`, known or not, cut short where the input ends: `ESC [ params final`,
+ * `ESC O x`, or 1 for a lone ESC.
+ */
 function unknownSequenceLength(chunk: string, at: number): number {
   const next = chunk[at + 1];
   if (next === '[') {
@@ -88,7 +115,8 @@ function unknownSequenceLength(chunk: string, at: number): number {
   return 1;
 }
 
-/** One chunk through a fresh decoder (tests, and callers that never see pastes). */
+/** One chunk through a fresh decoder, flushed because the input ends there (tests, and one-shot callers). */
 export function decodeKeys(chunk: string): Key[] {
-  return new KeyDecoder().feed(chunk);
+  const decoder = new KeyDecoder();
+  return [...decoder.feed(chunk), ...decoder.flush()];
 }

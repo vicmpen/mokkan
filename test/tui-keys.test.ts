@@ -26,10 +26,10 @@ describe('decodeKeys', () => {
     expect(decodeKeys('\x01\x1f\x9b')).toEqual([]);
   });
 
-  it('treats a lone ESC, or ESC with an unknown sequence, as escape and swallows the sequence', () => {
+  it('treats a lone ESC as escape and drops an unknown sequence without a key', () => {
     expect(decodeKeys('\x1b')).toEqual([{ name: 'escape' }]);
-    expect(decodeKeys('\x1b[99z')).toEqual([{ name: 'escape' }]);
-    expect(decodeKeys('\x1bOZ')).toEqual([{ name: 'escape' }]);
+    expect(decodeKeys('\x1b[99z')).toEqual([]);
+    expect(decodeKeys('\x1bOZ')).toEqual([]);
     expect(decodeKeys('\x1bq')).toEqual([{ name: 'escape' }, ch('q')]);
   });
 
@@ -47,5 +47,22 @@ describe('decodeKeys', () => {
     const d = new KeyDecoder();
     expect(d.feed(`${PASTE_START}one\r`)).toEqual([ch('o'), ch('n'), ch('e'), ch(' ')]);
     expect(d.feed(`two${PASTE_END}q`)).toEqual([ch('t'), ch('w'), ch('o'), ch('q')]);
+  });
+
+  it('holds back an escape sequence split across chunks', () => {
+    const d = new KeyDecoder();
+    expect(d.feed(`${PASTE_START}hi\x1b[20`)).toEqual([ch('h'), ch('i')]);
+    expect(d.feed('1~\r\x03')).toEqual([{ name: 'enter' }, { name: 'ctrl-c' }]);
+    expect(d.feed('\x1b[2')).toEqual([]);
+    expect(d.feed(`00~a\rb${PASTE_END}`)).toEqual([ch('a'), ch(' '), ch('b')]);
+    expect(d.feed('\x1b[')).toEqual([]);
+    expect(d.feed('A')).toEqual([{ name: 'up' }]);
+  });
+
+  it('holds a trailing lone ESC until flush', () => {
+    const d = new KeyDecoder();
+    expect(d.feed('x\x1b')).toEqual([ch('x')]);
+    expect(d.flush()).toEqual([{ name: 'escape' }]);
+    expect(d.flush()).toEqual([]);
   });
 });
