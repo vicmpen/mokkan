@@ -13,7 +13,11 @@ const CHROME_ROWS = 6;
 const MIN_TEXT_COLUMNS = 10;
 /** Width of the row prefix: marker, number, state. */
 const ROW_PREFIX_COLUMNS = 1 + 3 + 2 + 12 + 1;
+/** A row's time column is separated from its text by at least this many columns. */
+const TIME_GAP_COLUMNS = 2;
 const GRACE_MS = DEFAULT_GRACE_MINUTES * 60_000;
+/** Columns the header keeps for its left side when a long error message is shortened. */
+const HEADER_LEFT_MIN = 24;
 /** ` Email     › ` and ` Password  › ` are this wide. */
 export const LOGIN_FIELD_COLUMN = 13;
 
@@ -30,6 +34,12 @@ const part = (text: string, ...styles: Style[]): Part => ({ text, styles });
 const partsWidth = (parts: Part[]): number => parts.reduce((n, p) => n + displayWidth(p.text), 0);
 /** Strips control characters from anything that came from the server. */
 const clean = (text: string): string => cleanText(text, Number.MAX_SAFE_INTEGER);
+/**
+ * Replaces each control character with one space, so code-point positions (and the cursor) stay put. Applied to
+ * the whole buffer before windowing, so the cursor is placed by the width that is drawn (`\r\n` is one grapheme).
+ */
+// eslint-disable-next-line no-control-regex
+const blankControls = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
 
 function cut(parts: Part[], columns: number): Part[] {
   const out: Part[] = [];
@@ -46,13 +56,14 @@ function cut(parts: Part[], columns: number): Part[] {
 const paintParts = (parts: Part[], extra: Style[]): string => parts.map((p) => paint(p.text, ...p.styles, ...extra)).join('');
 
 /**
- * One line of exactly `columns` columns: `left`, padding, `right`. The left side is shortened first; the right
- * side is dropped when keeping it would leave the left fewer than `minLeft` columns.
+ * One line of exactly `columns` columns: `left`, padding of at least `minGap` columns, `right`. The left side is
+ * shortened first; the right side is dropped when keeping it would leave the left fewer than `minLeft` columns.
  */
-function line(left: Part[], right: Part[], columns: number, opts: { minLeft?: number; rowStyle?: Style } = {}): string {
+function line(left: Part[], right: Part[], columns: number, opts: { minLeft?: number; minGap?: number; rowStyle?: Style } = {}): string {
   const rw = partsWidth(right);
-  const keepRight = rw > 0 && columns - 1 - rw >= (opts.minLeft ?? 8);
-  const l = cut(left, keepRight ? columns - 1 - rw : columns);
+  const reserved = rw + (opts.minGap ?? 1);
+  const keepRight = rw > 0 && columns - reserved >= (opts.minLeft ?? 8);
+  const l = cut(left, keepRight ? columns - reserved : columns);
   const r = keepRight ? right : [];
   const gap = ' '.repeat(Math.max(0, columns - partsWidth(l) - partsWidth(r)));
   const extra: Style[] = opts.rowStyle ? [opts.rowStyle] : [];
@@ -94,8 +105,8 @@ export function cursorPosition(state: TuiState, size: Size): { row: number; colu
     return { row: l.field === 'email' ? 5 : 6, column: LOGIN_FIELD_COLUMN + cursorColumn + 1 };
   }
   if (state.mode.kind !== 'input') return null;
-  const labelWidth = displayWidth(` ${state.mode.label} › `);
-  const { cursorColumn } = inputWindow(state.mode.buffer, state.mode.cursor, size.columns - labelWidth);
+  const labelWidth = displayWidth(` ${clean(state.mode.label)} › `);
+  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, size.columns - labelWidth);
   return { row: size.rows - 1, column: labelWidth + cursorColumn + 1 };
 }
 
@@ -122,18 +133,21 @@ function dashboardLines(state: TuiState, size: Size, now: Date): string[] {
 }
 
 function header(state: TuiState, columns: number, now: Date): string {
-  const left: Part[] = [part(' mokkan', 'bold'), part(` · ${state.email}`)];
+  const left: Part[] = [part(' mokkan', 'bold'), part(` · ${clean(state.email)}`)];
   for (const seg of creditSegments(state.credits)) left.push(part(seg.text, seg.tone));
   left.push(part(` · ${state.host}`));
-  return line(left, [status(state, now)], columns);
+  return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
 }
 
-function status(state: TuiState, now: Date): Part {
+/** The header's right side. A long error message is shortened so the whole part fits `maxWidth`. */
+function status(state: TuiState, now: Date, maxWidth: number): Part {
   const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
   if (state.refreshing) return part('refreshing…', 'dim');
   if (state.error) {
-    const what = state.error.kind === 'offline' ? 'offline' : `error: ${clean(state.error.message)}`;
-    return part(age ? `${what} · data ${age} old` : what, 'red');
+    const suffix = age ? ` · data ${age} old` : '';
+    if (state.error.kind === 'offline') return part(`offline${suffix}`, 'red');
+    const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth('error: ') - displayWidth(suffix)));
+    return part(`error: ${msg}${suffix}`, 'red');
   }
   return part(age ? `refreshed ${age} ago` : 'loading…', 'dim');
 }
@@ -175,14 +189,16 @@ function row(r: Reminder, index: number, selected: boolean, columns: number, now
     part(` ${clean(r.text)}`),
   ];
   const right = when === '' ? [] : [part(when, tone)];
-  return line(left, right, columns, { minLeft: ROW_PREFIX_COLUMNS + MIN_TEXT_COLUMNS, rowStyle: selected ? 'reverse' : undefined });
+  return line(left, right, columns, {
+    minLeft: ROW_PREFIX_COLUMNS + MIN_TEXT_COLUMNS, minGap: TIME_GAP_COLUMNS, rowStyle: selected ? 'reverse' : undefined,
+  });
 }
 
 function footer(state: TuiState, columns: number): string[] {
   const m = state.mode;
   if (m.kind === 'input') {
-    const label = ` ${m.label} › `;
-    const { text } = inputWindow(m.buffer, m.cursor, columns - displayWidth(label));
+    const label = ` ${clean(m.label)} › `;
+    const { text } = inputWindow(blankControls(m.buffer), m.cursor, columns - displayWidth(label));
     return [line([part(label, 'bold'), part(text)], [], columns), line([part(` ${m.hint}`, 'dim')], [], columns)];
   }
   if (m.kind === 'confirm') return [line([part(` ${clean(m.prompt)}`, 'yellow')], [], columns), ''];
@@ -209,7 +225,7 @@ function loginLines(state: TuiState, size: Size): string[] {
     field('Email', l.email, l.field === 'email'),
     field('Password', '•'.repeat([...l.password].length), l.field === 'password'),
     '',
-    l.error ? line([part(` ${l.error.text}`, l.error.tone)], [], columns) : '',
+    l.error ? line([part(` ${clean(l.error.text)}`, l.error.tone)], [], columns) : '',
     '',
     line([part(' Enter next field / log in · Tab switch field · Esc quit', 'dim')], [], columns),
     line([part(' No account? Quit and run: mokkan register you@example.com', 'dim')], [], columns),

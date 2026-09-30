@@ -31,6 +31,7 @@ describe('render: dashboard', () => {
     const lines = plain(raw);
     expect(raw).toHaveLength(24);
     for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(80);
+    for (const l of raw) expect(l.endsWith('\x1b[0m')).toBe(true);
     expect(lines[0].startsWith(' mokkan · a@example.com · 480 cr · api.mokkan.dev')).toBe(true);
     expect(lines[0].endsWith('refreshed 8s ago')).toBe(true);
     expect(displayWidth(lines[0])).toBe(80);
@@ -58,6 +59,16 @@ describe('render: dashboard', () => {
     expect(strip(render(dashboard({ credits: 12 }), SIZE, NOW)[0])).toContain(' · ⚠ 12 cr — mokkan buy · api.mokkan.dev');
     expect(strip(render(dashboard({ credits: null, fetchedAt: null }), SIZE, NOW)[0]).endsWith('loading…')).toBe(true);
     expect(strip(render(dashboard({ credits: null, fetchedAt: null }), SIZE, NOW)[0])).toContain(' mokkan · a@example.com · api.mokkan.dev');
+  });
+
+  it('shortens a long header error so the data age stays visible', () => {
+    const raw = render(dashboard({ error: { kind: 'error', message: 'x'.repeat(103) }, fetchedAt: new Date(NOW.getTime() - 45_000) }), SIZE, NOW);
+    const header = strip(raw[0]);
+    expect(header.startsWith(' mokkan · a@example.com')).toBe(true);
+    expect(header).toContain('error: xxx');
+    expect(header).toContain('…');
+    expect(header.endsWith('· data 45s old')).toBe(true);
+    expect(displayWidth(header)).toBe(80);
   });
 
   it('marks tabs and counts, and shows the Done count once loaded', () => {
@@ -88,6 +99,8 @@ describe('render: dashboard', () => {
     const narrow = plain(render(dashboard(), { columns: 40, rows: 24 }, NOW));
     expect(narrow[3]).toContain('…');
     for (const l of narrow) expect(displayWidth(l)).toBeLessThanOrEqual(40);
+    const tight = plain(render(dashboard(), { columns: 56, rows: 24 }, NOW));
+    expect(tight[3].endsWith('…  overdue 20m')).toBe(true); // at least two columns before the time
     const tiny = plain(render(dashboard(), { columns: 30, rows: 24 }, NOW));
     expect(tiny[3]).not.toContain('overdue');
     expect(displayWidth(tiny[3])).toBe(30);
@@ -113,6 +126,17 @@ describe('render: dashboard', () => {
     const c = plain(render(confirm, SIZE, NOW));
     expect(c[22].trimEnd()).toBe(' Pop "second"? y/n');
     expect(c[23]).toBe('');
+  });
+
+  it('blanks control characters in the input buffer without moving the cursor', () => {
+    const state = dashboard({ mode: { kind: 'input', purpose: 'edit', label: 'edit [f3a9c1d2]', hint: '', buffer: 'a\x1bb', cursor: 3 } });
+    const raw = render(state, SIZE, NOW);
+    expect(strip(raw[22]).trimEnd()).toBe(' edit [f3a9c1d2] › a b');
+    expect(raw[22]).not.toContain('\x1b[2');
+    expect(cursorPosition(state, SIZE)).toEqual({ row: 23, column: displayWidth(' edit [f3a9c1d2] › ') + 3 + 1 });
+    const crlf = dashboard({ mode: { kind: 'input', purpose: 'edit', label: 'edit [f3a9c1d2]', hint: '', buffer: 'a\r\nb', cursor: 4 } });
+    expect(plain(render(crlf, SIZE, NOW))[22].trimEnd()).toBe(' edit [f3a9c1d2] › a  b');
+    expect(cursorPosition(crlf, SIZE)).toEqual({ row: 23, column: displayWidth(' edit [f3a9c1d2] › ') + 4 + 1 });
   });
 
   it('shows one line when the terminal is too small', () => {
@@ -141,6 +165,14 @@ describe('render: login screen', () => {
     state.login.field = 'email';
     state.login.cursor = 3;
     expect(cursorPosition(state, SIZE)).toEqual({ row: 5, column: 17 });
+  });
+
+  it('cleans the server error shown under the fields', () => {
+    const state = initialState(null, 'api.mokkan.dev');
+    state.login.error = { text: 'bad\x1b[2Jlogin', tone: 'red' };
+    const raw = render(state, SIZE, NOW);
+    expect(strip(raw[7])).toContain('bad [2Jlogin');
+    expect(raw[7]).not.toContain('\x1b[2J');
   });
 });
 
