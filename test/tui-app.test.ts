@@ -5,7 +5,7 @@ import { clearCredentials, credentialsPath, saveCredentials } from '../src/crede
 import { TuiApp } from '../src/tui/app.js';
 import { decodeKeys } from '../src/tui/keys.js';
 import { CliHarness, NOW } from './cli-harness.js';
-import { FakeServer, type FakeAccount } from './fake-server.js';
+import { FakeServer, tokenPair, type FakeAccount } from './fake-server.js';
 
 export const ID1 = 'aaaa1111-0000-0000-0000-000000000000'; // bottom of the active list
 export const ID2 = 'bbbb2222-0000-0000-0000-000000000000'; // top of the active list
@@ -387,5 +387,83 @@ describe('TuiApp actions', () => {
     server.on('POST', '/billing/checkout', () => ({ status: 404, body: { error: 'not_found', message: 'no' } }));
     await type(app, 'b');
     expect(app.state.message).toEqual({ text: 'Billing is not enabled on this server.', tone: 'red' });
+  });
+});
+
+describe('TuiApp login screen', () => {
+  let server: FakeServer;
+  let h: CliHarness;
+  beforeEach(async () => {
+    server = new FakeServer();
+    await server.start();
+    h = new CliHarness();
+    seed(server);
+    server.on('POST', '/auth/login', (req) => (req.body as { password: string }).password === 'correct horse'
+      ? { status: 200, body: tokenPair('L') }
+      : { status: 401, body: { error: 'invalid_credentials', message: 'Wrong email or password' } });
+  });
+  afterEach(async () => { await server.stop(); h.dispose(); });
+
+  it('starts on the login screen when there are no credentials, and nothing is fetched', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    expect(app.state.screen).toBe('login');
+    await app.refresh();
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it('edits the two fields, switching with Tab, arrows and Enter', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    await type(app, 'you@example.com');
+    expect(app.state.login).toMatchObject({ field: 'email', email: 'you@example.com', cursor: 15 });
+    await type(app, '\t');
+    expect(app.state.login).toMatchObject({ field: 'password', cursor: 0 });
+    await type(app, 'pw\x1b[A');
+    expect(app.state.login).toMatchObject({ field: 'email', password: 'pw', cursor: 15 });
+    await type(app, '\x7f\x7f\x7fnet\r');
+    expect(app.state.login).toMatchObject({ field: 'password', email: 'you@example.net', cursor: 2 });
+    await type(app, '\x15');
+    expect(app.state.login.password).toBe('');
+    await type(app, 'q'); // a letter here, not quit
+    expect(app.exitCode).toBeNull();
+    expect(app.state.login.password).toBe('q');
+  });
+
+  it('rejects an empty email or password locally', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    await type(app, '\r\r');
+    expect(app.state.login).toMatchObject({ field: 'email', error: { text: 'Enter an email address.', tone: 'red' } });
+    await type(app, 'you@example.com\r\r');
+    expect(app.state.login).toMatchObject({ field: 'password', error: { text: 'Enter your password.', tone: 'red' } });
+    expect(server.count('POST', '/auth/login')).toBe(0);
+  });
+
+  it('shows the server message on a wrong password and clears the password', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    await type(app, 'you@example.com\twrong\r');
+    expect(server.last('POST', '/auth/login')?.body).toEqual({ email: 'you@example.com', password: 'wrong' });
+    expect(app.state.screen).toBe('login');
+    expect(app.state.login).toMatchObject({ field: 'password', password: '', cursor: 0, busy: false, error: { text: 'Wrong email or password', tone: 'red' } });
+    expect(existsSync(credentialsPath(h.env()))).toBe(false);
+  });
+
+  it('logs in, saves the credentials, and loads the dashboard', async () => {
+    const app = makeApp(server, h, { loggedIn: false });
+    await type(app, 'you@example.com\tcorrect horse\r');
+    expect(app.state.screen).toBe('dashboard');
+    expect(app.state.email).toBe('you@example.com');
+    expect(existsSync(credentialsPath(h.env()))).toBe(true);
+    expect(app.rows().map((r) => r.id)).toEqual([ID2, ID1]);
+    expect(app.state.credits).toBe(100);
+    expect(app.state.login.password).toBe('');
+  });
+
+  it('comes back to the dashboard after a session loss and a new login', async () => {
+    server.on('POST', '/auth/refresh', () => ({ status: 401, body: { error: 'invalid_token', message: 'dead' } }));
+    const app = makeApp(server, h, { accessExpiresAt: '2026-09-28T11:00:00.000Z' });
+    await app.refresh();
+    expect(app.state.screen).toBe('login');
+    await type(app, 'a@example.com\tcorrect horse\r');
+    expect(app.state.screen).toBe('dashboard');
+    expect(app.rows()).toHaveLength(2);
   });
 });

@@ -1,4 +1,5 @@
 import { ApiError, NetworkError, apiErrorHint, type MokkanClient } from '../client.js';
+import { EMAIL_RE } from '../commands/auth.js';
 import { isTrustedCheckoutUrl } from '../commands/billing.js';
 import { parseDuration } from '../duration.js';
 import { SessionExpiredError } from '../errors.js';
@@ -124,8 +125,68 @@ export class TuiApp {
   }
 
   private loginKey(key: Key): Promise<void> {
+    const l = this.state.login;
     if (key.name === 'escape' || key.name === 'ctrl-c') return this.quit();
+    if (l.busy) return Promise.resolve();
+    if (key.name === 'tab' || key.name === 'up' || key.name === 'down') {
+      this.switchField(l.field === 'email' ? 'password' : 'email');
+      return Promise.resolve();
+    }
+    if (key.name === 'enter') {
+      if (l.field === 'email') { this.switchField('password'); return Promise.resolve(); }
+      return this.submitLogin();
+    }
+    const line = { buffer: l[l.field], cursor: l.cursor };
+    if (editLine(line, key)) {
+      l[l.field] = line.buffer;
+      l.cursor = line.cursor;
+      this.changed();
+    }
     return Promise.resolve();
+  }
+
+  private switchField(field: 'email' | 'password'): void {
+    const l = this.state.login;
+    l.field = field;
+    l.cursor = [...l[field]].length;
+    this.changed();
+  }
+
+  /** `client.login` saves the credentials through its onCredentials callback, exactly as `mokkan login` does. */
+  private submitLogin(): Promise<void> {
+    const l = this.state.login;
+    const email = l.email.trim();
+    if (!EMAIL_RE.test(email)) {
+      l.error = { text: 'Enter an email address.', tone: 'red' };
+      this.switchField('email');
+      return Promise.resolve();
+    }
+    if (l.password === '') {
+      l.error = { text: 'Enter your password.', tone: 'red' };
+      this.changed();
+      return Promise.resolve();
+    }
+    l.busy = true;
+    l.error = { text: 'Logging in…', tone: 'dim' };
+    this.changed();
+    return this.enqueue(async () => {
+      try {
+        const creds = await this.client.login(email, l.password);
+        this.state.email = creds.email;
+        this.state.screen = 'dashboard';
+        this.state.login = emptyLogin();
+        this.changed();
+        await this.doRefresh();
+      } catch (err) {
+        l.busy = false;
+        l.password = '';
+        l.field = 'password';
+        l.cursor = 0;
+        const hint = err instanceof ApiError ? apiErrorHint(err) : null;
+        l.error = { text: hint ? `${errorText(err)} ${hint}` : errorText(err), tone: 'red' };
+        this.changed();
+      }
+    });
   }
 
   private quit(): Promise<void> {
