@@ -17,7 +17,7 @@ The `mokkan` CLI talks to the user's reminder server. Codex has no lifecycle hoo
    - `mokkan balance` — credit balance and recent transactions
    - `mokkan ack <id-prefix>... | all` — acknowledge reminders the user has seen
    - `mokkan` / `mokkan list --all` / `mokkan done` / `mokkan status`
-4. Never run `mokkan register` or `mokkan login` yourself: they need a hidden password prompt. Tell the user to run them in a terminal (`mokkan register you@example.com`).
+4. Never run `mokkan register`, `mokkan login` or `mokkan ui` yourself: the first two need a hidden password prompt and `mokkan ui` is the user's full-screen terminal view. Tell the user to run them in a terminal (`mokkan register you@example.com`, `mokkan ui`).
 5. If a command exits with code 2, the server is unreachable or failing: say so and continue the task; do not retry in a loop.
 6. **Credits.** Reminders run on prepaid credits: €5 = 500 credits, and a new account starts with 50. `mokkan push` costs 1 credit; every 3rd edit costs 1 credit; a scheduled reminder's email costs 1 credit, charged only when it is actually sent (every reminder with a due time that has not been emailed and is not acknowledged, whether scheduled, due or shown but not yet acknowledged, keeps 1 credit in reserve; `mokkan ack` releases it; scheduling needs the push cost plus 1 × (those reminders + 1)). `pop`, `dequeue`, `ack`, `list`, `pending` and `done` are free.
    - To change a reminder use `mokkan edit`, never `pop` followed by `push`, and batch all changes to one reminder into a single `edit` call (each call counts as an edit).

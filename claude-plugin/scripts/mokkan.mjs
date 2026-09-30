@@ -21,9 +21,9 @@ var SessionExpiredError = class extends UserError {
 
 // src/client.ts
 var ApiError = class extends Error {
-  constructor(status, code, message, body, retryAfterSeconds) {
+  constructor(status2, code, message, body, retryAfterSeconds) {
     super(message);
-    this.status = status;
+    this.status = status2;
     this.code = code;
     this.body = body;
     this.retryAfterSeconds = retryAfterSeconds;
@@ -34,6 +34,17 @@ var ApiError = class extends Error {
   body;
   retryAfterSeconds;
 };
+function apiErrorHint(err) {
+  const body = err.body ?? {};
+  if (err.status === 402 && typeof body.required === "number" && typeof body.cost === "number" && body.required > body.cost) {
+    return `(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)`;
+  }
+  if (err.status === 429 && err.retryAfterSeconds !== void 0) {
+    const s = Math.ceil(err.retryAfterSeconds);
+    return `(try again in about ${s >= 60 ? `${Math.ceil(s / 60)} minutes` : `${s} seconds`})`;
+  }
+  return null;
+}
 var NetworkError = class extends Error {
   constructor(message, cause) {
     super(message);
@@ -610,10 +621,10 @@ var DURATION_RE = /^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/;
 function parseDuration(input) {
   const s = input.trim();
   const m = DURATION_RE.exec(s);
-  if (!s || !m || m.slice(1).every((part) => part === void 0)) {
+  if (!s || !m || m.slice(1).every((part2) => part2 === void 0)) {
     throw new Error(`Invalid duration "${input}" (examples: 30s, 10m, 2h, 1d, 1h30m)`);
   }
-  const [d, h, min, sec] = m.slice(1).map((part) => part === void 0 ? 0 : Number(part));
+  const [d, h, min, sec] = m.slice(1).map((part2) => part2 === void 0 ? 0 : Number(part2));
   return d * 86400 + h * 3600 + min * 60 + sec;
 }
 
@@ -889,167 +900,23 @@ async function heartbeatCommand(ctx) {
   return 0;
 }
 
-// src/hooks.ts
-import { appendFileSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import path2 from "node:path";
-var HOOK_BUDGET_MS = 8e3;
-var DELIVER_MIN_REMAINING_MS = 1500;
-var NOT_LOGGED_IN_LOG_INTERVAL_MS = 3600 * 1e3;
-function parseHookInput(raw) {
-  if (raw.trim() === "") return {};
-  try {
-    const value = JSON.parse(raw);
-    return typeof value === "object" && value !== null ? value : {};
-  } catch {
-    return {};
-  }
-}
-function formatStopDecision(due) {
-  const reason = [
-    "Reminders due (from the mokkan server):",
-    ...due.map(formatReminderLine),
-    `Tell the user these reminders verbatim, then remind them to ${ACK_HINT}. Then stop.`
-  ].join("\n");
-  const systemMessage = `${due.length} reminder(s) due \u2014 see reply`;
-  return `${JSON.stringify({ decision: "block", reason, systemMessage })}
-`;
-}
-function appendHookLog(env, kind, message) {
-  const file = hookLogPath(env);
-  mkdirSync2(path2.dirname(file), { recursive: true, mode: 448 });
-  appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${kind} ${message}
-`, { mode: 384 });
-}
-function notifiedMarkerPath(env, suffix = "") {
-  return `${hookLogPath(env)}${suffix}.notified`;
-}
-function notifiedRecently(env, suffix = "") {
-  try {
-    const at = Date.parse(readFileSync2(notifiedMarkerPath(env, suffix), "utf8").trim());
-    const age = Date.now() - at;
-    return Number.isFinite(at) && age >= 0 && age < NOT_LOGGED_IN_LOG_INTERVAL_MS;
-  } catch {
-    return false;
-  }
-}
-function markNotified(env, suffix = "") {
-  writeFileSync2(notifiedMarkerPath(env, suffix), `${(/* @__PURE__ */ new Date()).toISOString()}
-`, { mode: 384 });
-}
-function safeAppendHookLog(env, kind, err) {
-  try {
-    if (err instanceof SessionExpiredError) {
-      appendHookLog(env, kind, "session expired; run: mokkan login");
-      markNotified(env);
-      return;
-    }
-    if (err instanceof ApiError && err.code === "no_credentials") {
-      if (notifiedRecently(env)) return;
-      appendHookLog(env, kind, err.message);
-      markNotified(env);
-      return;
-    }
-    if (err instanceof ApiError && err.status === 402) {
-      if (notifiedRecently(env, ".402")) return;
-      appendHookLog(env, kind, err.message);
-      markNotified(env, ".402");
-      return;
-    }
-    appendHookLog(env, kind, err instanceof Error ? err.message : String(err));
-  } catch {
-  }
-}
-async function runHook(ctx, kind, input, deadlineAt = Infinity) {
-  const { client } = ctx;
-  const deliver = async (ids) => {
-    if (ids.length > 0 && deadlineAt - Date.now() >= DELIVER_MIN_REMAINING_MS) await client.deliver(ids);
-  };
-  await client.heartbeat("claude-code", input.session_id);
-  const pending = await client.pending();
-  const dueIds = pending.due.map((r) => r.id);
-  if (kind === "session-start") {
-    const block = formatPending(pending);
-    await deliver(dueIds);
-    return block;
-  }
-  if (input.stop_hook_active === true || dueIds.length === 0) return "";
-  await deliver(dueIds);
-  return formatStopDecision(pending.due);
-}
-async function hookCommand(ctx, args, deadlineAt = Infinity) {
-  const kind = args[0];
-  if (kind !== "session-start" && kind !== "stop") throw new UserError("Usage: mokkan hook session-start|stop");
-  try {
-    const input = parseHookInput(await ctx.io.readStdin());
-    ctx.io.stdout(await runHook(ctx, kind, input, deadlineAt));
-  } catch (err) {
-    safeAppendHookLog(ctx.io.env, kind, err);
-  }
-  return 0;
-}
-
-// src/watcher.ts
-var DEFAULT_INTERVAL_SECONDS = 60;
-var MIN_INTERVAL_SECONDS = 5;
-async function watchOnce(ctx) {
-  await ctx.client.heartbeat("watcher");
-  const pending = await ctx.client.pending();
-  if (pending.due.length === 0) return 0;
-  ctx.io.stdout(`${ctx.now().toISOString()} reminders due:
-${pending.due.map(formatReminderLine).join("\n")}
-`);
-  await ctx.client.deliver(pending.due.map((r) => r.id));
-  return pending.due.length;
-}
-async function watchCommand(ctx) {
-  const raw = ctx.flags.interval;
-  const interval = raw === void 0 ? DEFAULT_INTERVAL_SECONDS : Number(raw);
-  if (!Number.isInteger(interval) || interval < MIN_INTERVAL_SECONDS) {
-    throw new UserError(`--interval must be a whole number of seconds, at least ${MIN_INTERVAL_SECONDS}`);
-  }
-  if (!ctx.client.hasCredentials()) throw new UserError("Not logged in. Run: mokkan login");
-  const once = ctx.flags.once === true;
-  const stop = new AbortController();
-  const onSignal = () => {
-    stop.abort();
-  };
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
-  try {
-    if (!once) ctx.io.stderr(`mokkan watch: polling ${ctx.client.baseUrl} every ${interval}s (Ctrl-C to stop)
-`);
-    while (!stop.signal.aborted) {
-      try {
-        await watchOnce(ctx);
-      } catch (err) {
-        if (err instanceof ApiError && err.code === "no_credentials" || err instanceof SessionExpiredError) throw err;
-        ctx.io.stderr(`${ctx.now().toISOString()} watch error: ${err instanceof Error ? err.message : String(err)}
-`);
-      }
-      if (once) break;
-      await ctx.io.sleep(interval * 1e3, stop.signal);
-    }
-  } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
-  }
-  return 0;
-}
+// src/statusline.ts
+import { spawn } from "node:child_process";
 
 // src/status-cache.ts
-import { chmodSync as chmodSync2, closeSync as closeSync2, mkdirSync as mkdirSync3, openSync as openSync2, readFileSync as readFileSync3, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3, writeSync as writeSync2 } from "node:fs";
+import { chmodSync as chmodSync2, closeSync as closeSync2, mkdirSync as mkdirSync2, openSync as openSync2, readFileSync as readFileSync2, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2, writeSync as writeSync2 } from "node:fs";
 import { randomBytes as randomBytes2 } from "node:crypto";
-import path3 from "node:path";
+import path2 from "node:path";
 var REFRESH_LOCK_STALE_MS = 15e3;
 function statusCachePath(env = process.env) {
-  return path3.join(configDir(env), "status.json");
+  return path2.join(configDir(env), "status.json");
 }
 function refreshLockPath(env) {
   return `${statusCachePath(env)}.lock`;
 }
 function readStatusCache(env = process.env) {
   try {
-    const value = JSON.parse(readFileSync3(statusCachePath(env), "utf8"));
+    const value = JSON.parse(readFileSync2(statusCachePath(env), "utf8"));
     if (value?.v !== 2 || typeof value.server_url !== "string" || typeof value.email !== "string" || typeof value.attempted_at !== "string" || !Array.isArray(value.reminders)) return null;
     return value;
   } catch {
@@ -1058,10 +925,10 @@ function readStatusCache(env = process.env) {
 }
 function writeStatusCache(cache, env = process.env) {
   const dir = configDir(env);
-  mkdirSync3(dir, { recursive: true, mode: 448 });
+  mkdirSync2(dir, { recursive: true, mode: 448 });
   const file = statusCachePath(env);
   const tmp = `${file}.${process.pid}.${randomBytes2(6).toString("hex")}.tmp`;
-  writeFileSync3(tmp, `${JSON.stringify(cache)}
+  writeFileSync2(tmp, `${JSON.stringify(cache)}
 `, { mode: 384 });
   chmodSync2(tmp, 384);
   renameSync2(tmp, file);
@@ -1081,7 +948,7 @@ function refreshInFlight(env = process.env) {
 }
 function tryAcquireRefreshLock(env = process.env) {
   const file = refreshLockPath(env);
-  mkdirSync3(configDir(env), { recursive: true, mode: 448 });
+  mkdirSync2(configDir(env), { recursive: true, mode: 448 });
   const owner = `${process.pid} ${randomBytes2(8).toString("hex")}
 `;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -1094,7 +961,7 @@ function tryAcquireRefreshLock(env = process.env) {
       }
       return () => {
         try {
-          if (readFileSync3(file, "utf8") === owner) unlinkSync2(file);
+          if (readFileSync2(file, "utf8") === owner) unlinkSync2(file);
         } catch {
         }
       };
@@ -1111,7 +978,6 @@ function tryAcquireRefreshLock(env = process.env) {
 }
 
 // src/statusline.ts
-import { spawn } from "node:child_process";
 var DEFAULT_TTL_SECONDS = 30;
 var DEFAULT_GRACE_MINUTES = 15;
 var COLD_FETCH_TIMEOUT_MS = 800;
@@ -1344,6 +1210,1181 @@ async function statuslineCommand(io, args, makeClient2) {
   } catch {
     return opts.refresh ? 0 : print({ kind: "unavailable" });
   }
+}
+
+// src/tui/state.ts
+var ACTIVE_STATES = /* @__PURE__ */ new Set(["due", "delivered", "acknowledged"]);
+function emptyLogin() {
+  return { field: "email", email: "", password: "", cursor: 0, busy: false, error: null };
+}
+function initialState(email, host) {
+  return {
+    screen: email === null ? "login" : "dashboard",
+    login: emptyLogin(),
+    tab: "active",
+    reminders: [],
+    done: null,
+    version: null,
+    selected: 0,
+    scroll: 0,
+    email: email ?? "",
+    host,
+    credits: null,
+    fetchedAt: null,
+    refreshing: false,
+    error: null,
+    message: null,
+    mode: { kind: "normal" }
+  };
+}
+function rowsOf(state) {
+  if (state.tab === "done") return state.done ?? [];
+  if (state.tab === "all") return state.reminders;
+  return state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
+}
+
+// src/tui/text.ts
+var segmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+function isWide(cp) {
+  return cp >= 4352 && cp <= 4447 || cp >= 11904 && cp <= 42191 || cp >= 44032 && cp <= 55203 || cp >= 63744 && cp <= 64255 || cp >= 65072 && cp <= 65103 || cp >= 65280 && cp <= 65376 || cp >= 65504 && cp <= 65510 || cp >= 127462 && cp <= 127487 || cp >= 127744 && cp <= 128591 || cp >= 128640 && cp <= 128767 || cp >= 129280 && cp <= 129535 || cp >= 129648 && cp <= 129791 || cp >= 131072 && cp <= 262141;
+}
+function graphemes(text) {
+  return [...segmenter.segment(text)].map((s) => s.segment);
+}
+function graphemeWidth(g) {
+  if (g.includes("\uFE0F")) return 2;
+  for (const c of g) if (isWide(c.codePointAt(0))) return 2;
+  return 1;
+}
+function displayWidth(text) {
+  let w = 0;
+  for (const g of graphemes(text)) w += graphemeWidth(g);
+  return w;
+}
+function fit(text, width) {
+  if (width <= 0) return "";
+  if (displayWidth(text) <= width) return text;
+  let out = "";
+  let used = 0;
+  for (const g of graphemes(text)) {
+    const w = graphemeWidth(g);
+    if (used + w > width - 1) break;
+    out += g;
+    used += w;
+  }
+  return `${out}\u2026`;
+}
+function padEnd(text, width) {
+  return text + " ".repeat(Math.max(0, width - displayWidth(text)));
+}
+function padStart(text, width) {
+  return " ".repeat(Math.max(0, width - displayWidth(text))) + text;
+}
+
+// src/tui/screen.ts
+var MIN_COLUMNS = 20;
+var MIN_ROWS = 8;
+var CHROME_ROWS = 6;
+var MIN_TEXT_COLUMNS = 10;
+var ROW_PREFIX_COLUMNS = 1 + 3 + 2 + 12 + 1;
+var TIME_GAP_COLUMNS = 2;
+var GRACE_MS = DEFAULT_GRACE_MINUTES * 6e4;
+var HEADER_LEFT_MIN = 24;
+var LOGIN_FIELD_COLUMN = 13;
+var SGR = { red: "31", yellow: "33", green: "32", dim: "2", plain: "", bold: "1", reverse: "7" };
+function paint2(text, ...styles) {
+  const codes = styles.map((s) => SGR[s]).filter((c) => c !== "");
+  return codes.length === 0 || text === "" ? text : `\x1B[${codes.join(";")}m${text}\x1B[0m`;
+}
+var part = (text, ...styles) => ({ text, styles });
+var partsWidth = (parts) => parts.reduce((n, p) => n + displayWidth(p.text), 0);
+var clean = (text) => cleanText(text, Number.MAX_SAFE_INTEGER);
+var blankControls = (text) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+function cut2(parts, columns) {
+  const out = [];
+  let left = columns;
+  for (const p of parts) {
+    const w = displayWidth(p.text);
+    if (w <= left) {
+      out.push(p);
+      left -= w;
+      continue;
+    }
+    if (left > 0) out.push({ text: fit(p.text, left), styles: p.styles });
+    break;
+  }
+  return out;
+}
+var paintParts = (parts, extra) => parts.map((p) => paint2(p.text, ...p.styles, ...extra)).join("");
+function line(left, right, columns, opts = {}) {
+  const rw = partsWidth(right);
+  const reserved = rw + (opts.minGap ?? 1);
+  const keepRight = rw > 0 && columns - reserved >= (opts.minLeft ?? 8);
+  const l = cut2(left, keepRight ? columns - reserved : columns);
+  const r = keepRight ? right : [];
+  const gap = " ".repeat(Math.max(0, columns - partsWidth(l) - partsWidth(r)));
+  const extra = opts.rowStyle ? [opts.rowStyle] : [];
+  return paintParts(l, extra) + (opts.rowStyle ? paint2(gap, opts.rowStyle) : gap) + paintParts(r, extra);
+}
+function inputWindow(buffer, cursor, width) {
+  const chars = [...buffer];
+  const w = (from, to) => displayWidth(chars.slice(from, to).join(""));
+  let start = 0;
+  while (start < cursor && w(start, cursor) >= width) start++;
+  let end = cursor;
+  while (end < chars.length && w(start, end + 1) <= width) end++;
+  return { text: chars.slice(start, end).join(""), cursorColumn: w(start, cursor) };
+}
+function render(state, size, now) {
+  const { columns, rows } = size;
+  let lines;
+  if (columns < MIN_COLUMNS || rows < MIN_ROWS) {
+    lines = [fit("mokkan ui: terminal too small", columns)];
+  } else if (state.screen === "login") {
+    lines = loginLines(state, size);
+  } else {
+    lines = dashboardLines(state, size, now);
+  }
+  while (lines.length < rows) lines.push("");
+  return lines.slice(0, rows).map((l) => `${l}\x1B[0m`);
+}
+function cursorPosition(state, size) {
+  if (size.columns < MIN_COLUMNS || size.rows < MIN_ROWS) return null;
+  if (state.screen === "login") {
+    const l = state.login;
+    const value = l.field === "email" ? l.email : "\u2022".repeat([...l.password].length);
+    const { cursorColumn: cursorColumn2 } = inputWindow(value, l.cursor, size.columns - LOGIN_FIELD_COLUMN);
+    return { row: l.field === "email" ? 5 : 6, column: LOGIN_FIELD_COLUMN + cursorColumn2 + 1 };
+  }
+  if (state.mode.kind !== "input") return null;
+  const labelWidth = displayWidth(` ${clean(state.mode.label)} \u203A `);
+  const { cursorColumn } = inputWindow(blankControls(state.mode.buffer), state.mode.cursor, size.columns - labelWidth);
+  return { row: size.rows - 1, column: labelWidth + cursorColumn + 1 };
+}
+function dashboardLines(state, size, now) {
+  const { columns, rows } = size;
+  const out = [header(state, columns, now), tabs(state, columns), "\u2500".repeat(columns)];
+  const listRows = rows - CHROME_ROWS;
+  const items = rowsOf(state);
+  if (items.length === 0) {
+    const empty = state.tab === "done" ? "Nothing done yet." : "No reminders. Press p to push one.";
+    out.push(line([part(` ${empty}`, "dim")], [], columns));
+    for (let i = 1; i < listRows; i++) out.push("");
+  } else {
+    for (let i = 0; i < listRows; i++) {
+      const idx = state.scroll + i;
+      out.push(idx < items.length ? row(items[idx], idx, idx === state.selected, columns, now) : "");
+    }
+  }
+  out.push(state.message ? line([part(` ${clean(state.message.text)}`, state.message.tone)], [], columns) : "");
+  out.push(...footer(state, columns));
+  return out;
+}
+function header(state, columns, now) {
+  const left = [part(" mokkan", "bold"), part(` \xB7 ${clean(state.email)}`)];
+  for (const seg of creditSegments(state.credits)) left.push(part(seg.text, seg.tone));
+  left.push(part(` \xB7 ${state.host}`));
+  return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
+}
+function status(state, now, maxWidth) {
+  const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
+  if (state.refreshing) return part("refreshing\u2026", "dim");
+  if (state.error) {
+    const suffix = age ? ` \xB7 data ${age} old` : "";
+    if (state.error.kind === "offline") return part(`offline${suffix}`, "red");
+    const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth("error: ") - displayWidth(suffix)));
+    return part(`error: ${msg}${suffix}`, "red");
+  }
+  return part(age ? `refreshed ${age} ago` : "loading\u2026", "dim");
+}
+function tabs(state, columns) {
+  const active = state.reminders.filter((r) => ACTIVE_STATES.has(r.state)).length;
+  const labels = [
+    ["active", `Active ${active}`],
+    ["all", `All ${state.reminders.length}`],
+    ["done", state.done ? `Done ${state.done.length}` : "Done"]
+  ];
+  const parts = [part(" ")];
+  labels.forEach(([tab, label], i) => {
+    if (i > 0) parts.push(part(" \u2502 ", "dim"));
+    parts.push(part(label, tab === state.tab ? "bold" : "dim"));
+  });
+  return line(parts, [], columns);
+}
+function timing(r, now) {
+  const t = now.getTime();
+  const due = r.due_at ? Date.parse(r.due_at) : NaN;
+  const isDue = r.state === "due" || r.state === "scheduled" && due <= t;
+  if (isDue) {
+    if (Number.isNaN(due)) return { when: "", tone: "yellow" };
+    if (t - due > GRACE_MS) return { when: `overdue ${formatAge(t - due)}`, tone: "red" };
+    return { when: `due ${formatWhen(new Date(due), now)}`, tone: "yellow" };
+  }
+  if (r.state === "scheduled") return { when: `@ ${formatWhen(new Date(due), now)}`, tone: "dim" };
+  if (r.state === "done") return { when: r.done_at ? `done ${formatWhen(new Date(r.done_at), now)}` : "", tone: "dim" };
+  const when = Number.isNaN(due) ? "" : `due ${formatWhen(new Date(due), now)}`;
+  return { when, tone: r.state === "delivered" ? "plain" : "dim" };
+}
+function row(r, index, selected, columns, now) {
+  const { when, tone } = timing(r, now);
+  const left = [
+    part(`${selected ? "\u25B8" : " "}${padStart(String(index + 1), 3)}  `),
+    part(padEnd(r.state, 12), tone),
+    part(` ${clean(r.text)}`)
+  ];
+  const right = when === "" ? [] : [part(when, tone)];
+  return line(left, right, columns, {
+    minLeft: ROW_PREFIX_COLUMNS + MIN_TEXT_COLUMNS,
+    minGap: TIME_GAP_COLUMNS,
+    rowStyle: selected ? "reverse" : void 0
+  });
+}
+function footer(state, columns) {
+  const m = state.mode;
+  if (m.kind === "input") {
+    const label = ` ${clean(m.label)} \u203A `;
+    const { text } = inputWindow(blankControls(m.buffer), m.cursor, columns - displayWidth(label));
+    return [line([part(label, "bold"), part(text)], [], columns), line([part(` ${m.hint}`, "dim")], [], columns)];
+  }
+  if (m.kind === "confirm") return [line([part(` ${clean(m.prompt)}`, "yellow")], [], columns), ""];
+  return [
+    line([part(" p push \xB7 i schedule \xB7 e edit \xB7 t time \xB7 a ack \xB7 A ack all", "dim")], [], columns),
+    line([part(" x pop \xB7 d dequeue \xB7 b buy \xB7 Tab view \xB7 r refresh \xB7 q quit \xB7 \u2191\u2193 move", "dim")], [], columns)
+  ];
+}
+function loginLines(state, size) {
+  const { columns } = size;
+  const l = state.login;
+  const field = (label, value, active) => {
+    const { text } = inputWindow(value, active ? l.cursor : [...value].length, columns - LOGIN_FIELD_COLUMN);
+    return line([part(` ${padEnd(label, 9)} \u203A `, active ? "bold" : "dim"), part(text)], [], columns);
+  };
+  return [
+    line([part(" mokkan", "bold"), part(` \xB7 ${state.host}`)], [part("not logged in", "dim")], columns),
+    "",
+    line([part(" Log in", "bold")], [], columns),
+    "",
+    field("Email", l.email, l.field === "email"),
+    field("Password", "\u2022".repeat([...l.password].length), l.field === "password"),
+    "",
+    l.error ? line([part(` ${clean(l.error.text)}`, l.error.tone)], [], columns) : "",
+    "",
+    line([part(" Enter next field / log in \xB7 Tab switch field \xB7 Esc quit", "dim")], [], columns),
+    line([part(" No account? Quit and run: mokkan register you@example.com", "dim")], [], columns)
+  ];
+}
+
+// src/tui/app.ts
+var REFRESH_INTERVAL_MS = 1e4;
+var TABS = ["active", "all", "done"];
+var CHROME_ROWS2 = 6;
+function errorText(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function editLine(line2, key) {
+  const chars = [...line2.buffer];
+  switch (key.name) {
+    case "left":
+      line2.cursor = Math.max(0, line2.cursor - 1);
+      break;
+    case "right":
+      line2.cursor = Math.min(chars.length, line2.cursor + 1);
+      break;
+    case "home":
+      line2.cursor = 0;
+      break;
+    case "end":
+      line2.cursor = chars.length;
+      break;
+    case "backspace":
+      if (line2.cursor > 0) {
+        chars.splice(line2.cursor - 1, 1);
+        line2.cursor -= 1;
+      }
+      break;
+    case "delete":
+      chars.splice(line2.cursor, 1);
+      break;
+    case "ctrl-u":
+      chars.length = 0;
+      line2.cursor = 0;
+      break;
+    case "char":
+      chars.splice(line2.cursor, 0, key.ch);
+      line2.cursor += 1;
+      break;
+    default:
+      return false;
+  }
+  line2.buffer = chars.join("");
+  return true;
+}
+var TuiApp = class {
+  state;
+  /** Set when the app wants to quit; the driver resolves with it. */
+  exitCode = null;
+  /** Called after every state change; the driver redraws. */
+  onChange = () => void 0;
+  size = { columns: 80, rows: 24 };
+  queue = Promise.resolve();
+  /** Ids already sent to /reminders/deliver, so a slow server never gets them twice. */
+  delivered = /* @__PURE__ */ new Set();
+  client;
+  now;
+  openUrl;
+  constructor(opts) {
+    this.client = opts.client;
+    this.now = opts.now;
+    this.openUrl = opts.openUrl;
+    this.state = initialState(opts.email, opts.host);
+  }
+  setSize(size) {
+    this.size = size;
+    this.clampSelection();
+  }
+  rows() {
+    return rowsOf(this.state);
+  }
+  render(size, now) {
+    return render(this.state, size, now);
+  }
+  refresh() {
+    return this.enqueue(() => this.doRefresh());
+  }
+  handleKey(key) {
+    const s = this.state;
+    if (s.screen === "login") return this.loginKey(key);
+    if (s.mode.kind === "input") return this.inputKey(s.mode, key);
+    if (s.mode.kind === "confirm") return this.confirmKey(s.mode, key);
+    return this.normalKey(key);
+  }
+  normalKey(key) {
+    const ch = key.name === "char" ? key.ch : "";
+    if (ch === "q" || key.name === "ctrl-c") return this.quit();
+    if (key.name === "up" || ch === "k") return this.move(-1);
+    if (key.name === "down" || ch === "j") return this.move(1);
+    if (key.name === "home") return this.move(-Infinity);
+    if (key.name === "end") return this.move(Infinity);
+    if (key.name === "tab") return this.nextTab();
+    if (ch === "r") return this.refresh();
+    if (ch === "p") return this.startInput("push", "push", "Enter to push (1 credit) \xB7 Esc to cancel");
+    if (ch === "i") return this.startInput("in", "in", "<duration> <text>, e.g. 2h call the bank \xB7 Enter to schedule \xB7 Esc to cancel");
+    if (ch === "e") {
+      const r = this.selectedReminder();
+      if (!r) return Promise.resolve();
+      const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
+      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (counts as one edit) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text });
+    }
+    if (ch === "t") {
+      const r = this.selectedReminder();
+      if (!r) return Promise.resolve();
+      return this.startInput("time", `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" \xB7 Enter to save (counts as one edit) \xB7 Esc to cancel', { targetId: r.id });
+    }
+    if (ch === "a") return this.ackSelected();
+    if (ch === "A") return this.ackAll();
+    if (ch === "x") return this.startConfirm("pop");
+    if (ch === "d") return this.startConfirm("dequeue");
+    if (ch === "b") return this.buy();
+    return Promise.resolve();
+  }
+  loginKey(key) {
+    const l = this.state.login;
+    if (key.name === "escape" || key.name === "ctrl-c") return this.quit();
+    if (l.busy) return Promise.resolve();
+    if (key.name === "tab" || key.name === "up" || key.name === "down") {
+      this.switchField(l.field === "email" ? "password" : "email");
+      return Promise.resolve();
+    }
+    if (key.name === "enter") {
+      if (l.field === "email") {
+        this.switchField("password");
+        return Promise.resolve();
+      }
+      return this.submitLogin();
+    }
+    const line2 = { buffer: l[l.field], cursor: l.cursor };
+    if (editLine(line2, key)) {
+      l[l.field] = line2.buffer;
+      l.cursor = line2.cursor;
+      this.changed();
+    }
+    return Promise.resolve();
+  }
+  switchField(field) {
+    const l = this.state.login;
+    l.field = field;
+    l.cursor = [...l[field]].length;
+    this.changed();
+  }
+  /** `client.login` saves the credentials through its onCredentials callback, exactly as `mokkan login` does. */
+  submitLogin() {
+    const l = this.state.login;
+    const email = l.email.trim();
+    if (!EMAIL_RE.test(email)) {
+      l.error = { text: "Enter an email address.", tone: "red" };
+      this.switchField("email");
+      return Promise.resolve();
+    }
+    if (l.password === "") {
+      l.error = { text: "Enter your password.", tone: "red" };
+      this.changed();
+      return Promise.resolve();
+    }
+    l.busy = true;
+    l.error = { text: "Logging in\u2026", tone: "dim" };
+    this.changed();
+    return this.enqueue(async () => {
+      try {
+        const creds = await this.client.login(email, l.password);
+        this.state.email = creds.email;
+        this.state.screen = "dashboard";
+        this.state.login = emptyLogin();
+        this.changed();
+        await this.doRefresh();
+      } catch (err) {
+        l.busy = false;
+        l.password = "";
+        l.field = "password";
+        l.cursor = 0;
+        const hint = err instanceof ApiError ? apiErrorHint(err) : null;
+        l.error = { text: hint ? `${errorText(err)} ${hint}` : errorText(err), tone: "red" };
+        this.changed();
+      }
+    });
+  }
+  quit() {
+    this.exitCode = 0;
+    this.changed();
+    return Promise.resolve();
+  }
+  move(delta) {
+    const s = this.state;
+    const n = this.rows().length;
+    s.selected = delta === -Infinity ? 0 : delta === Infinity ? n - 1 : s.selected + delta;
+    this.clampSelection();
+    this.changed();
+    return Promise.resolve();
+  }
+  nextTab() {
+    const s = this.state;
+    s.tab = TABS[(TABS.indexOf(s.tab) + 1) % TABS.length];
+    s.selected = 0;
+    s.scroll = 0;
+    this.changed();
+    if (s.tab !== "done" || s.done !== null) return Promise.resolve();
+    return this.enqueue(async () => {
+      s.done = (await this.client.list("done")).reminders;
+      this.clampSelection();
+      this.changed();
+    });
+  }
+  activeRows() {
+    return this.state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
+  }
+  /** The selected reminder for e, t and a; sets the message and returns null when there is none to change. */
+  selectedReminder() {
+    const s = this.state;
+    if (s.tab === "done") {
+      this.say("Switch to Active or All to change reminders.", "yellow");
+      return null;
+    }
+    const r = this.rows()[s.selected];
+    if (!r) {
+      this.say("Nothing selected.", "yellow");
+      return null;
+    }
+    return r;
+  }
+  startInput(purpose, label, hint, extra = {}) {
+    const buffer = extra.buffer ?? "";
+    this.state.message = null;
+    this.state.mode = { kind: "input", purpose, label, hint, buffer, cursor: [...buffer].length, ...extra };
+    this.changed();
+    return Promise.resolve();
+  }
+  inputKey(mode, key) {
+    if (key.name === "ctrl-c") return this.quit();
+    if (key.name === "escape") {
+      this.state.mode = { kind: "normal" };
+      this.changed();
+      return Promise.resolve();
+    }
+    if (key.name === "enter") return this.submitInput(mode);
+    if (editLine(mode, key)) this.changed();
+    return Promise.resolve();
+  }
+  submitInput(mode) {
+    const s = this.state;
+    const text = mode.buffer.trim();
+    if (text === "") {
+      s.mode = { kind: "normal" };
+      this.changed();
+      return Promise.resolve();
+    }
+    const version = s.version ?? void 0;
+    switch (mode.purpose) {
+      case "push":
+        return this.action(async () => {
+          const res = await this.client.push(text);
+          this.say(`Pushed [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+        });
+      case "in": {
+        const space = text.search(/\s/);
+        const word = space === -1 ? text : text.slice(0, space);
+        const rest = space === -1 ? "" : text.slice(space + 1).trim();
+        const seconds = this.parseDurationOrSay(word);
+        if (seconds === null) return Promise.resolve();
+        if (rest === "") {
+          this.say("Add the reminder text after the duration.", "red");
+          return Promise.resolve();
+        }
+        const now = this.now();
+        const dueAt = new Date(now.getTime() + seconds * 1e3);
+        if (!Number.isFinite(dueAt.getTime())) {
+          this.say("duration is too large", "red");
+          return Promise.resolve();
+        }
+        return this.action(async () => {
+          const res = await this.client.push(rest, dueAt);
+          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})`, "green");
+        });
+      }
+      case "edit":
+        if (text === mode.originalText) {
+          s.mode = { kind: "normal" };
+          this.say("Unchanged.", "dim");
+          return Promise.resolve();
+        }
+        return this.action(async () => {
+          const res = await this.client.editReminder(mode.targetId, { text }, version);
+          this.say(`Edited [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+        });
+      case "time": {
+        let dueAt = null;
+        if (text !== "clear") {
+          const seconds = this.parseDurationOrSay(text);
+          if (seconds === null) return Promise.resolve();
+          dueAt = new Date(this.now().getTime() + seconds * 1e3);
+          if (!Number.isFinite(dueAt.getTime())) {
+            this.say("duration is too large", "red");
+            return Promise.resolve();
+          }
+        }
+        const now = this.now();
+        return this.action(async () => {
+          const res = await this.client.editReminder(mode.targetId, { due_at: dueAt }, version);
+          const r = res.reminder;
+          const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : "(time cleared)";
+          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, "green");
+        });
+      }
+    }
+  }
+  /** `parseDuration`, with its error shown in the message line (the input stays open). */
+  parseDurationOrSay(word) {
+    try {
+      return parseDuration(word);
+    } catch (err) {
+      this.say(errorText(err), "red");
+      return null;
+    }
+  }
+  /** Leaves input or confirm mode, runs one server call, then refreshes. Failures become messages through `fail`. */
+  action(work) {
+    this.state.mode = { kind: "normal" };
+    this.changed();
+    return this.enqueue(async () => {
+      try {
+        await work();
+      } catch (err) {
+        await this.fail(err);
+        return;
+      }
+      await this.doRefresh();
+    });
+  }
+  startConfirm(action) {
+    const list = this.activeRows();
+    const target = action === "pop" ? list[0] : list[list.length - 1];
+    if (!target) {
+      this.say("List is empty.");
+      return Promise.resolve();
+    }
+    this.state.message = null;
+    this.state.mode = { kind: "confirm", action, prompt: `${action === "pop" ? "Pop" : "Dequeue"} "${target.text}"? y/n` };
+    this.changed();
+    return Promise.resolve();
+  }
+  confirmKey(mode, key) {
+    if (key.name === "ctrl-c") return this.quit();
+    if (key.name !== "char" || key.ch !== "y") {
+      this.state.mode = { kind: "normal" };
+      this.changed();
+      return Promise.resolve();
+    }
+    const version = this.state.version ?? void 0;
+    return this.action(async () => {
+      const res = mode.action === "pop" ? await this.client.pop(version) : await this.client.dequeue(version);
+      this.say(`${mode.action === "pop" ? "Popped" : "Dequeued"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+    });
+  }
+  ackSelected() {
+    const r = this.selectedReminder();
+    if (!r) return Promise.resolve();
+    const version = this.state.version ?? void 0;
+    return this.action(async () => {
+      const res = await this.client.ack([r.id], version);
+      this.say(`Acknowledged ${res.acknowledged.length} reminder(s).`, "green");
+    });
+  }
+  ackAll() {
+    return this.action(async () => {
+      const res = await this.client.ack("all");
+      this.say(`Acknowledged ${res.acknowledged.length} reminder(s).`, "green");
+    });
+  }
+  /** Same rules as `mokkan buy`: only a Stripe Checkout address is opened; the link is always shown. */
+  buy() {
+    return this.action(async () => {
+      let res;
+      try {
+        res = await this.client.checkout();
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          this.say("Billing is not enabled on this server.", "red");
+          return;
+        }
+        throw err;
+      }
+      let how = "\xB7 open it in your browser";
+      if (!isTrustedCheckoutUrl(res.url)) how = "\xB7 not opened: not a Stripe Checkout address";
+      else if (this.openUrl) {
+        try {
+          this.openUrl(res.url);
+          how = "\xB7 opening in your browser";
+        } catch {
+        }
+      }
+      this.say(`Checkout: ${res.url} ${how} When the payment completes, the balance updates on the next refresh.`);
+    });
+  }
+  listHeight() {
+    return Math.max(1, this.size.rows - CHROME_ROWS2);
+  }
+  clampSelection() {
+    const s = this.state;
+    const n = this.rows().length;
+    const h = this.listHeight();
+    s.selected = n === 0 ? 0 : Math.min(Math.max(0, s.selected), n - 1);
+    if (s.selected < s.scroll) s.scroll = s.selected;
+    if (s.selected >= s.scroll + h) s.scroll = s.selected - h + 1;
+    s.scroll = Math.max(0, Math.min(s.scroll, Math.max(0, n - h)));
+  }
+  changed() {
+    this.onChange();
+  }
+  say(text, tone = "plain") {
+    this.state.message = { text, tone };
+    this.changed();
+  }
+  /** Every server call runs here, one after another. `work` failures become messages through `fail`. */
+  enqueue(work) {
+    const run2 = this.queue.then(() => work().catch((err) => this.fail(err)));
+    this.queue = run2.catch(() => void 0);
+    return run2;
+  }
+  async doRefresh() {
+    const s = this.state;
+    if (s.screen !== "dashboard" || this.exitCode !== null) return;
+    s.refreshing = true;
+    this.changed();
+    try {
+      const [list, me, , done] = await Promise.all([
+        this.client.list("all"),
+        this.client.me().catch(() => null),
+        this.client.heartbeat("ui").catch(() => null),
+        s.tab === "done" ? this.client.list("done") : null
+      ]);
+      const keep = this.rows()[s.selected]?.id;
+      s.reminders = list.reminders;
+      s.version = list.version;
+      s.fetchedAt = this.now();
+      s.error = null;
+      if (typeof me?.credit_balance === "number") s.credits = me.credit_balance;
+      if (done) s.done = done.reminders;
+      const idx = keep === void 0 ? -1 : this.rows().findIndex((r) => r.id === keep);
+      if (idx !== -1) s.selected = idx;
+      this.clampSelection();
+      await this.deliverDue();
+    } catch (err) {
+      if (this.sessionLost(err)) {
+        this.toLogin("Session expired, log in again.");
+        return;
+      }
+      s.error = err instanceof NetworkError ? { kind: "offline", message: err.message } : { kind: "error", message: errorText(err) };
+    } finally {
+      s.refreshing = false;
+      this.changed();
+    }
+  }
+  /** Reminders shown here count as shown: due ones are marked delivered, like the hooks and `mokkan watch` do. */
+  async deliverDue() {
+    const s = this.state;
+    const ids = s.reminders.filter((r) => r.state === "due" && !this.delivered.has(r.id)).map((r) => r.id);
+    if (ids.length === 0) return;
+    for (const id of ids) this.delivered.add(id);
+    let res;
+    try {
+      res = await this.client.deliver(ids);
+    } catch (err) {
+      if (this.sessionLost(err)) throw err;
+      for (const id of ids) this.delivered.delete(id);
+      return;
+    }
+    s.version = res.version;
+    const at = this.now().toISOString();
+    for (const id of res.delivered) {
+      const r = s.reminders.find((x) => x.id === id);
+      if (r) {
+        r.state = "delivered";
+        r.delivered_at = at;
+      }
+    }
+  }
+  sessionLost(err) {
+    return err instanceof SessionExpiredError || err instanceof ApiError && err.code === "no_credentials";
+  }
+  /** The client has already removed the dead credentials; show the login screen with a clean slate. */
+  toLogin(message) {
+    const s = this.state;
+    s.screen = "login";
+    s.login = emptyLogin();
+    s.login.error = { text: message, tone: "red" };
+    s.reminders = [];
+    s.done = null;
+    s.version = null;
+    s.selected = 0;
+    s.scroll = 0;
+    s.email = "";
+    s.credits = null;
+    s.fetchedAt = null;
+    s.error = null;
+    s.message = null;
+    s.mode = { kind: "normal" };
+    this.delivered.clear();
+    this.changed();
+  }
+  /** Maps a failed server call to the message line; only a lost session changes the screen. */
+  async fail(err) {
+    if (this.sessionLost(err)) {
+      this.toLogin("Session expired, log in again.");
+      return;
+    }
+    if (err instanceof NetworkError) {
+      this.say(`Server unreachable: ${err.message}`, "red");
+      return;
+    }
+    if (err instanceof ApiError) {
+      if (err.status === 409 && err.code === "stale") {
+        await this.doRefresh();
+        this.say("The list changed, try again.", "yellow");
+        return;
+      }
+      if (err.status === 409 && err.code === "not_editable") {
+        this.say("This reminder was already shown or emailed, so its time can no longer be changed.", "red");
+        return;
+      }
+      if (err.status === 404 && err.code === "empty") {
+        this.say("List is empty.");
+        return;
+      }
+      const hint = apiErrorHint(err);
+      let text = hint ? `${err.message} ${hint}` : err.message;
+      if (err.status === 402 && err.code === "insufficient_credits" && !text.includes("mokkan buy")) text += " Run: mokkan buy";
+      this.say(text, "red");
+      return;
+    }
+    this.say(errorText(err), "red");
+  }
+};
+
+// src/tui/terminal.ts
+import { writeSync as writeSync3 } from "node:fs";
+
+// src/tui/keys.ts
+var PASTE_START = "\x1B[200~";
+var PASTE_END = "\x1B[201~";
+var SEQUENCES = {
+  "\x1B[A": "up",
+  "\x1B[B": "down",
+  "\x1B[C": "right",
+  "\x1B[D": "left",
+  "\x1BOA": "up",
+  "\x1BOB": "down",
+  "\x1BOC": "right",
+  "\x1BOD": "left",
+  "\x1B[H": "home",
+  "\x1B[F": "end",
+  "\x1B[1~": "home",
+  "\x1B[4~": "end",
+  "\x1BOH": "home",
+  "\x1BOF": "end",
+  "\x1B[3~": "delete"
+};
+var SINGLE = {
+  "\r": "enter",
+  "\n": "enter",
+  "	": "tab",
+  "\x7F": "backspace",
+  "\b": "backspace",
+  "": "ctrl-c",
+  "": "ctrl-u"
+};
+var isControl = (cp) => cp < 32 || cp >= 127 && cp <= 159;
+var INCOMPLETE_TAIL = /\x1b(?:\[[\x20-\x3f]*|O)?$/;
+var KeyDecoder = class {
+  inPaste = false;
+  /** The incomplete escape sequence held back from the end of the last chunk. */
+  pending = "";
+  feed(chunk) {
+    const input = this.pending + chunk;
+    const tail = INCOMPLETE_TAIL.exec(input)?.[0] ?? "";
+    this.pending = tail;
+    return this.decode(input.slice(0, input.length - tail.length));
+  }
+  /**
+   * Decodes the held-back tail as if the input ended there: a lone ESC is `escape`, an incomplete sequence is
+   * dropped.
+   */
+  flush() {
+    const rest = this.pending;
+    this.pending = "";
+    return this.decode(rest);
+  }
+  decode(chunk) {
+    const keys = [];
+    let i = 0;
+    while (i < chunk.length) {
+      if (this.inPaste) {
+        const end = chunk.indexOf(PASTE_END, i);
+        keys.push(...pasteChars(end === -1 ? chunk.slice(i) : chunk.slice(i, end)));
+        if (end === -1) return keys;
+        this.inPaste = false;
+        i = end + PASTE_END.length;
+        continue;
+      }
+      const c = chunk[i];
+      if (c === "\x1B") {
+        if (chunk.startsWith(PASTE_START, i)) {
+          this.inPaste = true;
+          i += PASTE_START.length;
+          continue;
+        }
+        const seq = Object.keys(SEQUENCES).find((s) => chunk.startsWith(s, i));
+        if (seq) {
+          keys.push({ name: SEQUENCES[seq] });
+          i += seq.length;
+          continue;
+        }
+        if (chunk[i + 1] !== "[" && chunk[i + 1] !== "O") keys.push({ name: "escape" });
+        i += unknownSequenceLength(chunk, i);
+        continue;
+      }
+      const single = SINGLE[c];
+      if (single) {
+        keys.push({ name: single });
+        i += 1;
+        continue;
+      }
+      const cp = chunk.codePointAt(i);
+      const text = String.fromCodePoint(cp);
+      i += text.length;
+      if (!isControl(cp)) keys.push({ name: "char", ch: text });
+    }
+    return keys;
+  }
+};
+function pasteChars(text) {
+  const keys = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "\x1B") {
+      i += unknownSequenceLength(text, i);
+      continue;
+    }
+    if (text.startsWith("\r\n", i)) {
+      keys.push({ name: "char", ch: " " });
+      i += 2;
+      continue;
+    }
+    const cp = text.codePointAt(i);
+    const c = String.fromCodePoint(cp);
+    i += c.length;
+    if (c === "\r" || c === "\n" || c === "	") keys.push({ name: "char", ch: " " });
+    else if (!isControl(cp)) keys.push({ name: "char", ch: c });
+  }
+  return keys;
+}
+function unknownSequenceLength(chunk, at) {
+  const next = chunk[at + 1];
+  if (next === "[") {
+    let j = at + 2;
+    while (j < chunk.length && chunk.charCodeAt(j) >= 32 && chunk.charCodeAt(j) <= 63) j++;
+    return Math.min(chunk.length, j + 1) - at;
+  }
+  if (next === "O") return Math.min(chunk.length, at + 3) - at;
+  return 1;
+}
+
+// src/tui/terminal.ts
+var ENTER_SCREEN = "\x1B[?1049h\x1B[H\x1B[2J\x1B[?25l\x1B[?2004h";
+var LEAVE_SCREEN = "\x1B[?2004l\x1B[0m\x1B[?25h\x1B[?1049l";
+var ESC_FLUSH_MS = 50;
+async function runTerminal(app, io, tty) {
+  let done;
+  const finished = new Promise((resolve) => {
+    done = resolve;
+  });
+  const wake = () => {
+    if (app.exitCode !== null) done();
+  };
+  let pending = null;
+  let flushTimer = null;
+  let left = false;
+  const draw = () => {
+    pending = null;
+    if (left) return;
+    const size = tty.size();
+    app.setSize(size);
+    const frame = app.render(size, io.now());
+    const cursor = cursorPosition(app.state, size);
+    const place = cursor ? `\x1B[${cursor.row};${cursor.column}H\x1B[?25h` : "\x1B[?25l";
+    io.stdout(`\x1B[H${frame.map((l) => `${l}\x1B[K`).join("\r\n")}${place}`);
+  };
+  const scheduleDraw = () => {
+    if (pending === null && !left) pending = setTimeout(draw, 0);
+  };
+  const restoreOnExit = () => {
+    try {
+      tty.setRawMode(false);
+    } catch {
+    }
+    try {
+      writeSync3(1, LEAVE_SCREEN);
+    } catch {
+    }
+  };
+  const onSignal = () => {
+    app.exitCode = 0;
+    wake();
+  };
+  const decoder = new KeyDecoder();
+  const flush = () => {
+    flushTimer = null;
+    for (const key of decoder.flush()) void app.handleKey(key);
+  };
+  app.onChange = () => {
+    scheduleDraw();
+    wake();
+  };
+  let unData = () => void 0;
+  let unResize = () => void 0;
+  let timer;
+  try {
+    io.stdout(ENTER_SCREEN);
+    tty.setRawMode(true);
+    unData = tty.onData((chunk) => {
+      for (const key of decoder.feed(chunk)) void app.handleKey(key);
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, ESC_FLUSH_MS);
+    });
+    unResize = tty.onResize(scheduleDraw);
+    process.once("exit", restoreOnExit);
+    process.once("SIGTERM", onSignal);
+    process.once("SIGHUP", onSignal);
+    timer = setInterval(() => {
+      void app.refresh();
+    }, REFRESH_INTERVAL_MS);
+    draw();
+    void app.refresh();
+    wake();
+    await finished;
+  } finally {
+    left = true;
+    app.onChange = () => void 0;
+    if (timer !== void 0) clearInterval(timer);
+    if (pending !== null) clearTimeout(pending);
+    if (flushTimer !== null) clearTimeout(flushTimer);
+    unData();
+    unResize();
+    process.off("exit", restoreOnExit);
+    process.off("SIGTERM", onSignal);
+    process.off("SIGHUP", onSignal);
+    tty.setRawMode(false);
+    io.stdout(LEAVE_SCREEN);
+  }
+  return app.exitCode ?? 0;
+}
+
+// src/commands/ui.ts
+async function uiCommand(ctx) {
+  const { io, client } = ctx;
+  if (!io.isTTY || !io.tty) throw new UserError("mokkan ui needs an interactive terminal.");
+  const app = new TuiApp({
+    client,
+    email: client.email,
+    host: new URL(client.baseUrl).host,
+    now: ctx.now,
+    openUrl: io.openUrl
+  });
+  return runTerminal(app, io, io.tty);
+}
+
+// src/hooks.ts
+import { appendFileSync, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import path3 from "node:path";
+var HOOK_BUDGET_MS = 8e3;
+var DELIVER_MIN_REMAINING_MS = 1500;
+var NOT_LOGGED_IN_LOG_INTERVAL_MS = 3600 * 1e3;
+function parseHookInput(raw) {
+  if (raw.trim() === "") return {};
+  try {
+    const value = JSON.parse(raw);
+    return typeof value === "object" && value !== null ? value : {};
+  } catch {
+    return {};
+  }
+}
+function formatStopDecision(due) {
+  const reason = [
+    "Reminders due (from the mokkan server):",
+    ...due.map(formatReminderLine),
+    `Tell the user these reminders verbatim, then remind them to ${ACK_HINT}. Then stop.`
+  ].join("\n");
+  const systemMessage = `${due.length} reminder(s) due \u2014 see reply`;
+  return `${JSON.stringify({ decision: "block", reason, systemMessage })}
+`;
+}
+function appendHookLog(env, kind, message) {
+  const file = hookLogPath(env);
+  mkdirSync3(path3.dirname(file), { recursive: true, mode: 448 });
+  appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${kind} ${message}
+`, { mode: 384 });
+}
+function notifiedMarkerPath(env, suffix = "") {
+  return `${hookLogPath(env)}${suffix}.notified`;
+}
+function notifiedRecently(env, suffix = "") {
+  try {
+    const at = Date.parse(readFileSync3(notifiedMarkerPath(env, suffix), "utf8").trim());
+    const age = Date.now() - at;
+    return Number.isFinite(at) && age >= 0 && age < NOT_LOGGED_IN_LOG_INTERVAL_MS;
+  } catch {
+    return false;
+  }
+}
+function markNotified(env, suffix = "") {
+  writeFileSync3(notifiedMarkerPath(env, suffix), `${(/* @__PURE__ */ new Date()).toISOString()}
+`, { mode: 384 });
+}
+function safeAppendHookLog(env, kind, err) {
+  try {
+    if (err instanceof SessionExpiredError) {
+      appendHookLog(env, kind, "session expired; run: mokkan login");
+      markNotified(env);
+      return;
+    }
+    if (err instanceof ApiError && err.code === "no_credentials") {
+      if (notifiedRecently(env)) return;
+      appendHookLog(env, kind, err.message);
+      markNotified(env);
+      return;
+    }
+    if (err instanceof ApiError && err.status === 402) {
+      if (notifiedRecently(env, ".402")) return;
+      appendHookLog(env, kind, err.message);
+      markNotified(env, ".402");
+      return;
+    }
+    appendHookLog(env, kind, err instanceof Error ? err.message : String(err));
+  } catch {
+  }
+}
+async function runHook(ctx, kind, input, deadlineAt = Infinity) {
+  const { client } = ctx;
+  const deliver = async (ids) => {
+    if (ids.length > 0 && deadlineAt - Date.now() >= DELIVER_MIN_REMAINING_MS) await client.deliver(ids);
+  };
+  await client.heartbeat("claude-code", input.session_id);
+  const pending = await client.pending();
+  const dueIds = pending.due.map((r) => r.id);
+  if (kind === "session-start") {
+    const block = formatPending(pending);
+    await deliver(dueIds);
+    return block;
+  }
+  if (input.stop_hook_active === true || dueIds.length === 0) return "";
+  await deliver(dueIds);
+  return formatStopDecision(pending.due);
+}
+async function hookCommand(ctx, args, deadlineAt = Infinity) {
+  const kind = args[0];
+  if (kind !== "session-start" && kind !== "stop") throw new UserError("Usage: mokkan hook session-start|stop");
+  try {
+    const input = parseHookInput(await ctx.io.readStdin());
+    ctx.io.stdout(await runHook(ctx, kind, input, deadlineAt));
+  } catch (err) {
+    safeAppendHookLog(ctx.io.env, kind, err);
+  }
+  return 0;
+}
+
+// src/watcher.ts
+var DEFAULT_INTERVAL_SECONDS = 60;
+var MIN_INTERVAL_SECONDS = 5;
+async function watchOnce(ctx) {
+  await ctx.client.heartbeat("watcher");
+  const pending = await ctx.client.pending();
+  if (pending.due.length === 0) return 0;
+  ctx.io.stdout(`${ctx.now().toISOString()} reminders due:
+${pending.due.map(formatReminderLine).join("\n")}
+`);
+  await ctx.client.deliver(pending.due.map((r) => r.id));
+  return pending.due.length;
+}
+async function watchCommand(ctx) {
+  const raw = ctx.flags.interval;
+  const interval = raw === void 0 ? DEFAULT_INTERVAL_SECONDS : Number(raw);
+  if (!Number.isInteger(interval) || interval < MIN_INTERVAL_SECONDS) {
+    throw new UserError(`--interval must be a whole number of seconds, at least ${MIN_INTERVAL_SECONDS}`);
+  }
+  if (!ctx.client.hasCredentials()) throw new UserError("Not logged in. Run: mokkan login");
+  const once = ctx.flags.once === true;
+  const stop = new AbortController();
+  const onSignal = () => {
+    stop.abort();
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  try {
+    if (!once) ctx.io.stderr(`mokkan watch: polling ${ctx.client.baseUrl} every ${interval}s (Ctrl-C to stop)
+`);
+    while (!stop.signal.aborted) {
+      try {
+        await watchOnce(ctx);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "no_credentials" || err instanceof SessionExpiredError) throw err;
+        ctx.io.stderr(`${ctx.now().toISOString()} watch error: ${err instanceof Error ? err.message : String(err)}
+`);
+      }
+      if (once) break;
+      await ctx.io.sleep(interval * 1e3, stop.signal);
+    }
+  } finally {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  }
+  return 0;
 }
 
 // src/statusline-setup.ts
@@ -1769,7 +2810,7 @@ function configureTmux(s, opts) {
 }
 var STATUS_RIGHT = /^\s*set(-option)?\s+(-\w+\s+)*status-right\s/;
 var TPM_RUN = /^\s*run(-shell)?\s.*\btpm\b/;
-var isOlderMokkanLine = (line) => line.includes("mokkan") || line.includes("statusline");
+var isOlderMokkanLine = (line2) => line2.includes("mokkan") || line2.includes("statusline");
 function foreignTmuxConfig(lines) {
   const own = lines.findIndex((l) => STATUS_RIGHT.test(l) && !isOlderMokkanLine(l));
   if (own !== -1) return `sets its own status-right (line ${own + 1})`;
@@ -1782,12 +2823,12 @@ function tmuxSnippet(node, cli) {
 }
 function foreignNotes(lines, span) {
   const notes = [];
-  lines.forEach((line, i) => {
+  lines.forEach((line2, i) => {
     if (i >= span.start && i <= span.end) return;
-    if (!STATUS_RIGHT.test(line)) return;
+    if (!STATUS_RIGHT.test(line2)) return;
     if (i > span.end) {
       notes.push(`  note: line ${i + 1} sets status-right after the mokkan block, so it hides mokkan.`);
-    } else if (isOlderMokkanLine(line)) {
+    } else if (isOlderMokkanLine(line2)) {
       notes.push(`  note: line ${i + 1} is an older mokkan status-right (outside the block); the block overrides it, you can delete it.`);
     } else {
       notes.push(`  note: line ${i + 1} sets your own status-right; the mokkan block overrides it. To keep both, add #(...) from the block to yours and run mokkan statusline --remove --tmux.`);
@@ -2008,6 +3049,7 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
                                   mokkan list (mokkan list --all with --all), or an id prefix
   mokkan pending                  due + awaiting acknowledgment
   mokkan done                     history of popped items
+  mokkan ui                       full-screen view of the list with keyboard actions (needs a terminal)
   mokkan status                   server, account, session state
   mokkan buy [--pack <key>] [--no-open]
                                   buy credits: prints (and opens) a Stripe Checkout link
@@ -2038,6 +3080,34 @@ function sleep(ms, signal) {
     }, { once: true });
   });
 }
+function defaultTerminal() {
+  const { stdin, stdout } = process;
+  if (!stdin.isTTY || !stdout.isTTY) return void 0;
+  return {
+    size: () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 }),
+    setRawMode: (on) => {
+      stdin.setRawMode(on);
+    },
+    onData: (listener) => {
+      const handler = (chunk) => {
+        listener(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+      };
+      stdin.setEncoding("utf8");
+      stdin.on("data", handler);
+      stdin.resume();
+      return () => {
+        stdin.off("data", handler);
+        stdin.pause();
+      };
+    },
+    onResize: (listener) => {
+      stdout.on("resize", listener);
+      return () => {
+        stdout.off("resize", listener);
+      };
+    }
+  };
+}
 function defaultIO() {
   return {
     stdout: (text) => {
@@ -2053,7 +3123,8 @@ function defaultIO() {
     readStdin: readAllStdin,
     now: () => /* @__PURE__ */ new Date(),
     sleep,
-    openUrl: openUrlDetached
+    openUrl: openUrlDetached,
+    tty: defaultTerminal()
   };
 }
 var EXIT_INSUFFICIENT_CREDITS = 3;
@@ -2066,16 +3137,9 @@ function reportError(err, io) {
   if (err instanceof ApiError) {
     io.stderr(`${err.message}
 `);
-    const body = err.body ?? {};
-    if (err.status === 402 && typeof body.required === "number" && typeof body.cost === "number" && body.required > body.cost) {
-      io.stderr(`(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)
+    const hint = apiErrorHint(err);
+    if (hint) io.stderr(`${hint}
 `);
-    }
-    if (err.status === 429 && err.retryAfterSeconds !== void 0) {
-      const s = Math.ceil(err.retryAfterSeconds);
-      io.stderr(`(try again in about ${s >= 60 ? `${Math.ceil(s / 60)} minutes` : `${s} seconds`})
-`);
-    }
     if (err.status === 402 && err.code === "insufficient_credits") return EXIT_INSUFFICIENT_CREDITS;
     return err.status >= 500 ? 2 : 1;
   }
@@ -2128,12 +3192,12 @@ function setupDeps(io) {
   return { running: io.cliPath ?? process.argv[1] ?? "", node: io.nodePath ?? process.execPath };
 }
 async function statuslineEntry(args, flags, io) {
-  const render = () => statuslineCommand(io, args, (creds, timeoutMs) => makeClient(creds, io, timeoutMs));
-  if (isRenderInvocation(args)) return render();
+  const render2 = () => statuslineCommand(io, args, (creds, timeoutMs) => makeClient(creds, io, timeoutMs));
+  if (isRenderInvocation(args)) return render2();
   const deps = setupDeps(io);
   const fromClaude = flags["exit-zero"] === true;
   if (args.length === 0 && !(io.stdinIsTTY ?? io.isTTY) && !fromClaude) {
-    if (migrateLegacyInvocation(io, deps)) return render();
+    if (migrateLegacyInvocation(io, deps)) return render2();
     io.stdout(`${nonTerminalHint(io.env)}
 `);
     return 0;
@@ -2178,6 +3242,14 @@ Logged out.
         return await doneCommand(ctx);
       case "pending":
         return await pendingCommand(ctx);
+      case "ui": {
+        const stop = new AbortController();
+        try {
+          return await uiCommand({ ...ctx, client: makeClient(creds, io, 5e3, stop.signal) });
+        } finally {
+          stop.abort();
+        }
+      }
       case "push":
         return await pushCommand(ctx, args);
       case "pop":

@@ -8,7 +8,7 @@ allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" *)
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" --argline "$ARGUMENTS" --exit-zero 2>&1`
 
-Show the output above to the user verbatim, including the ids in square brackets. Do not run any other command and do not paraphrase. If the output asks the user to finish something in a terminal (registration or login need a hidden password prompt), tell them exactly that command; if `mokkan` is not installed in their terminal (for example they only have the Claude Code plugin), `npx @vicmpen/mokkan-cli <the same arguments>` runs it. Do not run `mokkan watch`, `mokkan register` or `mokkan login` yourself, through this command or otherwise, beyond what the output above already shows. If the output is empty, say "No output from mokkan."
+Show the output above to the user verbatim, including the ids in square brackets. Do not run any other command and do not paraphrase. If the output asks the user to finish something in a terminal (registration or login need a hidden password prompt), tell them exactly that command; if `mokkan` is not installed in their terminal (for example they only have the Claude Code plugin), `npx @vicmpen/mokkan-cli <the same arguments>` runs it. Do not run `mokkan ui`, `mokkan watch`, `mokkan register` or `mokkan login` yourself, through this command or otherwise, beyond what the output above already shows (`mokkan ui` is the user's full-screen terminal view; if they ask for it, tell them to run `mokkan ui` in a terminal). If the output is empty, say "No output from mokkan."
 
 ## Status line
 

@@ -76,11 +76,32 @@ mokkan ack <id...> | all               acknowledge reminders you have seen
 mokkan pending | done                  due and not yet shown | finished reminders
 mokkan balance | buy                   credits
 mokkan statusline                      set up the status line (see below)
+mokkan ui                              full-screen view with keyboard actions (see below)
 ```
 
 Add `--json` for machine-readable output. `mokkan help` lists everything.
 
 `mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
+
+## Terminal UI
+
+`mokkan ui` opens a full-screen view of your stack in the terminal: the list with each reminder's state and due time, your credit balance, and key hints. It refreshes every 10 seconds and after every action.
+
+| Key | Action |
+|---|---|
+| `↑` `↓` (or `k` `j`), `Home`, `End` | move the selection |
+| `p` | push: type the text, `Enter` sends it (1 credit) |
+| `i` | schedule: `2h call the bank`, the first word is a duration |
+| `e` | edit the selected reminder's text (one edit) |
+| `t` | change its due time: a duration, or `clear` (one edit) |
+| `a` / `A` | acknowledge the selected reminder / all |
+| `x` / `d` | pop the top / dequeue the bottom, after a `y/n` confirmation |
+| `b` | buy credits (opens Stripe Checkout in your browser) |
+| `Tab` | switch between Active, All (adds scheduled) and Done |
+| `r` | refresh now |
+| `q`, `Ctrl-C` | quit |
+
+Reminders that are due while the view is open count as shown, exactly as when a session or `mokkan watch` shows them: acknowledge them with `a`, or their email goes out after the grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` stays a terminal command. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
 ## Credits and pricing
 
