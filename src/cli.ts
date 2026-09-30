@@ -13,6 +13,7 @@ import { doneCommand, listCommand, pendingCommand } from './commands/list.js';
 import { ackCommand, editCommand, inCommand, pushCommand, takeCommand } from './commands/mutate.js';
 import { balanceCommand, buyCommand, openUrlDetached } from './commands/billing.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
+import { uiCommand } from './commands/ui.js';
 import { HOOK_BUDGET_MS, hookCommand, safeAppendHookLog } from './hooks.js';
 import { watchCommand } from './watcher.js';
 import { invalidateStatusCache } from './status-cache.js';
@@ -149,6 +150,7 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
                                   mokkan list (mokkan list --all with --all), or an id prefix
   mokkan pending                  due + awaiting acknowledgment
   mokkan done                     history of popped items
+  mokkan ui                       full-screen view of the list with keyboard actions (needs a terminal)
   mokkan status                   server, account, session state
   mokkan buy [--pack <key>] [--no-open]
                                   buy credits: prints (and opens) a Stripe Checkout link
@@ -178,6 +180,27 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** The real terminal for `mokkan ui`; undefined when stdin or stdout is not a TTY. */
+function defaultTerminal(): TerminalIO | undefined {
+  const { stdin, stdout } = process;
+  if (!stdin.isTTY || !stdout.isTTY) return undefined;
+  return {
+    size: () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 }),
+    setRawMode: (on) => { stdin.setRawMode(on); },
+    onData: (listener) => {
+      const handler = (chunk: Buffer | string): void => { listener(typeof chunk === 'string' ? chunk : chunk.toString('utf8')); };
+      stdin.setEncoding('utf8');
+      stdin.on('data', handler);
+      stdin.resume();
+      return () => { stdin.off('data', handler); stdin.pause(); };
+    },
+    onResize: (listener) => {
+      stdout.on('resize', listener);
+      return () => { stdout.off('resize', listener); };
+    },
+  };
+}
+
 export function defaultIO(): CliIO {
   return {
     stdout: (text) => { process.stdout.write(text); },
@@ -190,6 +213,7 @@ export function defaultIO(): CliIO {
     now: () => new Date(),
     sleep,
     openUrl: openUrlDetached,
+    tty: defaultTerminal(),
   };
 }
 
@@ -319,6 +343,14 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
       case 'list': return await listCommand(ctx);
       case 'done': return await doneCommand(ctx);
       case 'pending': return await pendingCommand(ctx);
+      case 'ui': {
+        const stop = new AbortController();
+        try {
+          return await uiCommand({ ...ctx, client: makeClient(creds, io, 5000, stop.signal) });
+        } finally {
+          stop.abort();
+        }
+      }
       case 'push': return await pushCommand(ctx, args);
       case 'pop': return await takeCommand(ctx, 'pop');
       case 'dequeue': return await takeCommand(ctx, 'dequeue');
