@@ -2,6 +2,7 @@ import { ApiError, NetworkError, apiErrorHint, type MokkanClient } from '../clie
 import { SessionExpiredError } from '../errors.js';
 import type { DeliverResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
+import { render as renderScreen } from './screen.js';
 import { initialState, rowsOf, emptyLogin, type Size, type Tab, type Tone, type TuiState } from './state.js';
 
 export const REFRESH_INTERVAL_MS = 10_000;
@@ -51,6 +52,8 @@ export class TuiApp {
   }
 
   rows(): Reminder[] { return rowsOf(this.state); }
+
+  render(size: Size, now: Date): string[] { return renderScreen(this.state, size, now); }
 
   refresh(): Promise<void> { return this.enqueue(() => this.doRefresh()); }
 
