@@ -1,4 +1,4 @@
-import type { Tone } from '../statusline.js';
+import type { Tone } from '../text.js';
 import type { Reminder } from '../types.js';
 
 export type { Tone };

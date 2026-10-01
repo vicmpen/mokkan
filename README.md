@@ -1,6 +1,6 @@
 # mokkan
 
-Cross-session reminders for Claude Code, Codex and your terminal. Push a note from one session and it shows up in the next one, on any machine. Schedule a reminder and it comes back in a session, or by email if you are away. A one-line status bar shows your latest reminder and your credit balance.
+Cross-session reminders for Claude Code, Codex and your terminal. Push a note from one session and it shows up in the next one, on any machine. Schedule a reminder and it comes back in a session, or by email if you are away.
 
 ```
 mokkan push "check the flaky login test"
@@ -27,6 +27,7 @@ From a shell, run `claude plugin marketplace add vicmpen/mokkan`, then `claude p
 The plugin provides:
 - **`/mokkan:mokkan <command>`**, for example `/mokkan:mokkan push call the bank` or `/mokkan:mokkan list`. Claude can also invoke it when you ask it to remember something.
 - **Hooks**: reminders that are due appear when a session starts and after Claude replies.
+- **A live pane**, `/mokkan-pane`: your stack beside the transcript, with the same actions as `mokkan ui` (see below).
 
 The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and hooks run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
 
@@ -47,7 +48,7 @@ mkdir -p ~/.codex/skills
 cp -r mokkan/codex ~/.codex/skills/mokkan
 ```
 
-The npm package contains the same files under `$(npm root -g)/mokkan/codex`. Codex has no hooks, so the skill tells Codex to check for due reminders at the start and end of each task. To see mokkan while you use Codex, set up the tmux status line (see below) and run Codex inside tmux.
+The npm package contains the same files under `$(npm root -g)/mokkan/codex`. Codex has no hooks, so the skill tells Codex to check for due reminders at the start and end of each task.
 
 ### A short `/mokkan` in Claude Code (optional)
 
@@ -76,7 +77,6 @@ mokkan ack <id...> | all               acknowledge reminders you have seen
 mokkan done <id...> | undone <id...>   finish reminders anywhere on the list (like pop, by id) | reopen finished ones
 mokkan pending | done                  due and not yet shown | finished reminders
 mokkan balance | buy                   credits
-mokkan statusline                      set up the status line (see below)
 mokkan ui                              full-screen view with keyboard actions (see below)
 ```
 
@@ -85,6 +85,24 @@ Add `--json` for machine-readable output. `mokkan help` lists everything.
 Acknowledging and finishing are different acts. `mokkan ack` says "seen": it stops the email for a due reminder and releases its reserved credit, but the reminder stays on the list. `mokkan done <id>` finishes a reminder anywhere on the list, exactly as `pop` finishes the top one; it moves to the history that `mokkan done` shows. `mokkan undone <id>` puts a finished reminder back where it was. A reopened reminder that had a due time comes back acknowledged, so it is never emailed again. Both are free.
 
 `mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
+
+## The pane in Claude Code
+
+`/mokkan-pane` opens a live view of your stack inside Claude Code. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) it docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
+
+Three tabs: **todo** (reminders without a due time), **reminders** (with one) and **done**. The arrows and Tab move a pointer through the rows; `1`–`9` jump to a row. Pressing the pointed row again (Enter, or its digit) marks it done, or reopens it on the done tab. The commands at the bottom have one key each:
+
+| Key | Action |
+|---|---|
+| `p` / `i` | push a note / schedule one (`2h text`) |
+| `e` / `t` | edit the pointed reminder's text / its due time (`2h`, or `clear`) |
+| `a` / `k` | mark the pointed reminder done (or reopen it) / acknowledge it |
+| `x` / `d` | pop the top / dequeue the bottom, after a `y`/`n` confirmation |
+| `s` / `r` | switch tab / refresh |
+| `l` / `g` | log in / register, when logged out (the password is masked) |
+| `c` | close the pane |
+
+The pane runs the plugin's own copy of the CLI, refreshes every minute and after every action, and shows each result on the line above the commands. Reminders that come due while it is open are announced with a toast.
 
 ## Terminal UI
 
@@ -121,29 +139,9 @@ A reminder with a due time keeps 1 credit in reserve for its email until the ema
 
 `mokkan buy` prints a Stripe Checkout link and opens it in your browser (only `https://…stripe.com` links are opened). After you pay, `mokkan balance` shows the new balance and your recent transactions.
 
-## Status line
-
-In Claude Code, run `/mokkan:mokkan statusline` and restart Claude Code. In a terminal, with the npm package installed globally:
-
-```
-mokkan statusline            # Claude Code, plus tmux if it is installed
-mokkan statusline --dry-run  # show the changes, write nothing
-mokkan statusline --remove   # undo
-```
-
-Set it up from the plugin or from a global install (`npm install -g @vicmpen/mokkan-cli`), not with `npx @vicmpen/mokkan-cli statusline`: npx runs mokkan from a temporary cache that npm may delete, so mokkan refuses to point a status line there.
-
-- **Claude Code**: the command sets `statusLine` in `~/.claude/settings.json`, or in `$CLAUDE_CONFIG_DIR/settings.json` when that is set. All other settings stay as they are, and a backup `settings.json.mokkan-bak-<time>` is saved first. If you already have a status line that is not mokkan's, the command leaves it alone and shows how to combine the two. `--force` replaces it.
-- **tmux and Codex**: Codex's own footer can only show built-in items, so mokkan appears in the tmux status bar. The command adds a marked block to `~/.tmux.conf`, after a backup. To see it, reload with `tmux source-file ~/.tmux.conf` and run Codex inside tmux. If your tmux config sets its own `status-right` or loads plugins through TPM (themes set `status-right` too), mokkan leaves it alone and prints the `#(…)` part to add to your own `status-right`; `mokkan statusline --tmux --force` adds the block anyway, and the block then wins. Use `--tmux` or `--claude` to set up only one of the two.
-- From Claude Code (`/mokkan:mokkan statusline`), only Claude Code's status line is set up. Add `--tmux` for the tmux block.
-- The status line runs `node` by name when the `node` on your PATH is the one that ran the setup, so a Node upgrade keeps working. Otherwise it runs the absolute path of that Node binary (for example a version-specific nvm path); run the setup again after removing that version.
-- When the CLI comes from the Claude Code plugin, it is copied to `~/.local/share/mokkan/mokkan.mjs` and the status line points at that copy. This keeps the status line working when the plugin updates.
-
-`mokkan statusline --render [--format ansi|tmux|plain]` prints the line itself. This is what the status bar runs. Plain `mokkan statusline` sets things up only when stdin is a terminal (or through `/mokkan:mokkan`, or with `--claude`/`--tmux`); a status bar still running an old `mokkan statusline` command gets migrated to `--render`, or shows a one-line hint to run the setup in a terminal.
-
 ## Uninstall
 
-Remove the status line first, because it runs mokkan: `/mokkan:mokkan statusline --remove` in Claude Code, or `mokkan statusline --remove` in a terminal. This takes mokkan out of `settings.json` and `~/.tmux.conf` (after backups) and deletes the copy in `~/.local/share/mokkan/`. Then:
+If you set up the status line that 0.2.0 offered, remove it first, because it runs mokkan: `mokkan statusline --remove` in a terminal (or `/mokkan:mokkan statusline --remove`). This takes it out of `settings.json` and `~/.tmux.conf` after backups and deletes the copy in `~/.local/share/mokkan/`. Then:
 
 - Claude Code plugin: `/plugin uninstall mokkan@mokkan`.
 - npm: `npm uninstall -g @vicmpen/mokkan-cli`.
@@ -153,7 +151,7 @@ Remove the status line first, because it runs mokkan: `/mokkan:mokkan statusline
 
 - Your email address, your reminders and your credit transactions are stored on the mokkan server (`api.mokkan.dev`). This lets them sync between sessions and lets scheduled reminders be emailed to you.
 - Payments go through Stripe Checkout. mokkan never sees your card details.
-- On your machine, mokkan keeps your login tokens in `~/.config/mokkan/credentials.json` (mode 0600) and a short-lived status cache next to it. Hook errors are logged to `hook.log` in the same directory.
+- On your machine, mokkan keeps your login tokens in `~/.config/mokkan/credentials.json` (mode 0600). Hook errors are logged to `hook.log` in the same directory.
 - `MOKKAN_SERVER_URL` points the CLI at a different server.
 
 ## Support

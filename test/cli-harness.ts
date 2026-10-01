@@ -11,18 +11,12 @@ export interface RunOptions {
   serverUrl?: string;
   loggedIn?: boolean;
   isTTY?: boolean;
-  /** stdin alone is a terminal (defaults to isTTY); `mokkan statusline` configures or renders by this. */
-  stdinIsTTY?: boolean;
   answers?: string[];
   stdin?: string;
   env?: NodeJS.ProcessEnv;
-  spawnRefresh?: () => void;
   now?: Date;
   /** Receives every URL the CLI asks to open; the real opener is never used in tests. */
   opened?: string[];
-  /** The running CLI file and node binary `mokkan statusline` writes into configs (defaults: a temp file, /usr/bin/node). */
-  cliPath?: string;
-  nodePath?: string;
   tty?: TerminalIO;
 }
 
@@ -42,14 +36,6 @@ export class CliHarness {
 
   env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     return { XDG_CONFIG_HOME: this.configHome, HOME: this.home, ...extra };
-  }
-
-  /** A stand-in for the running CLI file (status line setup resolves it with realpath). */
-  fakeCli(): string {
-    const file = path.join(this.configHome, 'app', 'mokkan', 'dist', 'cli.js');
-    mkdirSync(path.dirname(file), { recursive: true });
-    if (!existsSync(file)) writeFileSync(file, '// fake mokkan cli\n');
-    return file;
   }
 
   saveCreds(serverUrl: string, accessExpiresAt = '2026-09-29T12:00:00.000Z'): Credentials {
@@ -72,7 +58,6 @@ export class CliHarness {
       stderr: (t) => { stderr += t; },
       env: this.env({ ...(opts.serverUrl ? { MOKKAN_SERVER_URL: opts.serverUrl } : {}), ...(opts.env ?? {}) }),
       isTTY: opts.isTTY ?? false,
-      stdinIsTTY: opts.stdinIsTTY ?? opts.isTTY ?? false,
       prompt: async () => {
         if (answers.length === 0) throw new Error('test prompt: no scripted answer left');
         return answers.shift()!;
@@ -80,10 +65,7 @@ export class CliHarness {
       readStdin: async () => opts.stdin ?? '',
       now: () => opts.now ?? NOW,
       sleep: async () => undefined,
-      spawnRefresh: opts.spawnRefresh,
       openUrl: (url) => { opts.opened?.push(url); return true; },
-      cliPath: opts.cliPath ?? this.fakeCli(),
-      nodePath: opts.nodePath ?? '/usr/bin/node',
       tty: opts.tty,
     };
     const code = await main(argv, io);

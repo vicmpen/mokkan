@@ -1,6 +1,6 @@
 ---
 name: mokkan
-description: Cross-session reminders through the `mokkan` CLI. Use at the start and end of every task, and whenever the user mentions reminders, remembering something, a todo stack, scheduling something for later, or a mokkan status line.
+description: Cross-session reminders through the `mokkan` CLI. Use at the start and end of every task, and whenever the user mentions reminders, remembering something, a todo stack, or scheduling something for later.
 ---
 
 # mokkan — cross-session reminders
@@ -23,4 +23,3 @@ The `mokkan` CLI talks to the user's reminder server. Codex has no lifecycle hoo
 6. **Credits.** Reminders run on prepaid credits: €5 = 500 credits, and a new account starts with 50. `mokkan push` costs 1 credit; every 3rd edit costs 1 credit; a scheduled reminder's email costs 1 credit, charged only when it is actually sent (every reminder with a due time that has not been emailed and is not acknowledged, whether scheduled, due or shown but not yet acknowledged, keeps 1 credit in reserve; `mokkan ack` releases it; scheduling needs the push cost plus 1 × (those reminders + 1)). `pop`, `dequeue`, `done`, `undone`, `ack`, `list`, `pending` and `done` are free.
    - To change a reminder use `mokkan edit`, never `pop` followed by `push`, and batch all changes to one reminder into a single `edit` call (each call counts as an edit).
    - If a command exits with code 3 (not enough credits; the message mentions `mokkan buy`), tell the user to run `mokkan buy` and stop: do not retry. Do not run `mokkan buy` yourself. `mokkan balance` shows what is left.
-7. **Status line.** When the user asks to show mokkan in a status line: Codex's own footer only shows built-in items and cannot run a command, so mokkan appears in the **tmux** status bar instead. Run `mokkan statusline --tmux` (it adds a marked `# >>> mokkan status line >>>` block to `~/.tmux.conf` after a backup; `--dry-run` previews, `--remove --tmux` undoes), relay the output, and tell the user to run Codex inside tmux and reload it with `tmux source-file ~/.tmux.conf`. Always pass `--tmux` here: without a target the command would also edit Claude Code's settings. Only if the user also wants the Claude Code status line, run `mokkan statusline --claude`. Never add `--force` on your own; if the output says an existing status line is not mokkan's, or that the tmux config sets its own `status-right` or uses TPM, show the user the `#(…)` part it prints to add to their own `status-right`, and ask before replacing anything.

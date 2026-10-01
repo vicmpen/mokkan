@@ -158,23 +158,6 @@ describe('Claude Code plugin files', () => {
     expect(hint(skill.front)).toBe(hint(command.front));
   });
 
-  it('the docs teach setting up the status line through the allowed command', () => {
-    for (const [file, name] of [[COMMAND, '/mokkan'], [PLUGIN_SKILL, '/mokkan:mokkan']]) {
-      const md = readFileSync(file, 'utf8');
-      // `/mokkan statusline` runs through the same `--argline …` line that allowed-tools permits.
-      expect(md).toContain(`\`${name} statusline\``);
-      expect(md).toContain(`\`${name} statusline --tmux\``);
-      expect(md).toContain(`\`${name} statusline --remove\``);
-      expect(md).toMatch(/^argument-hint: .*statusline/m);
-      // The limits are in the description, which the model reads before the command runs.
-      expect(md).toMatch(/^description: .*Never pass --force, logout or buy unless the user typed them\./m);
-    }
-    const skill = readFileSync(path.join(SKILL_DIR, 'codex', 'SKILL.md'), 'utf8');
-    expect(skill).toContain('`mokkan statusline --tmux`');
-    expect(skill).toContain('tmux');
-    expect(readFileSync(path.join(SKILL_DIR, 'install.sh'), 'utf8')).toContain('mokkan statusline');
-  });
-
   it('the Codex skill has the required frontmatter', () => {
     const md = readFileSync(path.join(SKILL_DIR, 'codex', 'SKILL.md'), 'utf8');
     expect(md.startsWith('---\nname: mokkan\n')).toBe(true);

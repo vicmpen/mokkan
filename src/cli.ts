@@ -16,11 +16,7 @@ import { heartbeatCommand } from './commands/heartbeat.js';
 import { uiCommand } from './commands/ui.js';
 import { HOOK_BUDGET_MS, hookCommand, safeAppendHookLog } from './hooks.js';
 import { watchCommand } from './watcher.js';
-import { invalidateStatusCache } from './status-cache.js';
-import { isRenderInvocation, statuslineCommand } from './statusline.js';
-import {
-  migrateLegacyInvocation, nonTerminalHint, refreshStableCopy, statuslineSetupCommand, type SetupDeps,
-} from './statusline-setup.js';
+import { statuslineCommand } from './statusline-remove.js';
 
 /** The interactive terminal `mokkan ui` drives. Absent when stdin or stdout is not a TTY. */
 export interface TerminalIO {
@@ -36,26 +32,16 @@ export interface CliIO {
   stderr(text: string): void;
   env: NodeJS.ProcessEnv;
   isTTY: boolean;
-  /**
-   * stdin alone is a terminal (default: isTTY). Plain `mokkan statusline` configures or renders by this: Claude Code
-   * pipes JSON into a status line command, and `mokkan statusline > log` from a terminal still configures.
-   */
-  stdinIsTTY?: boolean;
   prompt(question: string, hidden: boolean): Promise<string>;
   readStdin(): Promise<string>;
   fetchImpl?: typeof fetch;
   now(): Date;
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
-  /** Starts the detached status line refresher (tests replace it). */
-  spawnRefresh?: () => void;
   /**
    * Opens a URL in the user's browser, best effort; returns whether an opener started (tests replace it so no
    * browser ever starts).
    */
   openUrl?: (url: string) => boolean;
-  /** The running CLI file and node binary written into status line configs (default process.argv[1], process.execPath). */
-  cliPath?: string;
-  nodePath?: string;
   /** The terminal for `mokkan ui` (defaultIO wires process.stdin/stdout; tests pass a FakeTerminal). */
   tty?: TerminalIO;
 }
@@ -166,13 +152,7 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
-  mokkan statusline [--claude] [--tmux|--codex] [--remove] [--dry-run] [--force]
-                                  set up the status line: Claude Code's settings.json, plus a marked block in
-                                  ~/.tmux.conf when tmux is installed and has no status-right or TPM of its own
-                                  (Codex shows it through tmux); backups first, never replaces a status line that
-                                  is not mokkan's without --force; from /mokkan only Claude Code unless --tmux
-  mokkan statusline --render [--format ansi|tmux|plain] [--no-text] [--width N] [--ttl S] [--grace M]
-                                  print the one-line summary (what the status line runs; always exits 0)
+  mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
 
   --exit-zero                     report errors on stdout and always exit 0 (for the /mokkan slash command)
   --argline "<words>"             first argument only: split the string on whitespace and use it as the arguments
@@ -212,7 +192,6 @@ export function defaultIO(): CliIO {
     stderr: (text) => { process.stderr.write(text); },
     env: process.env,
     isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-    stdinIsTTY: Boolean(process.stdin.isTTY),
     prompt: promptLine,
     readStdin: readAllStdin,
     now: () => new Date(),
@@ -253,7 +232,6 @@ function makeClient(creds: Credentials | null, io: CliIO, timeoutMs: number, sig
     reloadCredentials: () => loadCredentials(io.env),
     lock: (fn, lockSignal) => withCredentialsLock(io.env, fn, { signal: lockSignal }),
     onSessionExpired: () => clearCredentials(io.env),
-    onListChanged: () => invalidateStatusCache(io.env),
     fetchImpl: io.fetchImpl,
     now: io.now,
     timeoutMs,
@@ -272,10 +250,6 @@ async function hookEntry(args: string[], flags: Record<string, string | boolean>
     io.stderr('Usage: mokkan hook session-start|stop\n');
     return 1;
   }
-  if (kind === 'session-start') {
-    // The status line may run a stable copy of a plugin-cache CLI (statusline-setup.ts): keep it current after updates.
-    try { refreshStableCopy(setupDeps(io).running, io.env); } catch { /* best effort */ }
-  }
   try {
     // Up to 3 sequential requests (+ a refresh), each capped at 3 s, under one overall deadline that keeps the
     // whole run inside Claude Code's 10 s hook timeout.
@@ -286,29 +260,6 @@ async function hookEntry(args: string[], flags: Record<string, string | boolean>
     safeAppendHookLog(io.env, kind, err);
     return 0;
   }
-}
-
-function setupDeps(io: CliIO): SetupDeps {
-  return { running: io.cliPath ?? process.argv[1] ?? '', node: io.nodePath ?? process.execPath };
-}
-
-/**
- * `statusline --render …` (or any render flag) renders; plain `statusline` configures. Exception: the plain command
- * with stdin not a terminal and outside /mokkan is most likely a status bar running an old `… statusline` config. It
- * never sets anything up: an old mokkan statusLine is migrated to `--render` and rendered as before; anything else
- * gets one line saying to run the setup in a terminal. An explicit target flag (`--claude`, `--tmux`) configures.
- */
-async function statuslineEntry(args: string[], flags: Record<string, string | boolean>, io: CliIO): Promise<number> {
-  const render = () => statuslineCommand(io, args, (creds, timeoutMs) => makeClient(creds, io, timeoutMs));
-  if (isRenderInvocation(args)) return render();
-  const deps = setupDeps(io);
-  const fromClaude = flags['exit-zero'] === true;
-  if (args.length === 0 && !(io.stdinIsTTY ?? io.isTTY) && !fromClaude) {
-    if (migrateLegacyInvocation(io, deps)) return render();
-    io.stdout(`${nonTerminalHint(io.env)}\n`);
-    return 0;
-  }
-  return statuslineSetupCommand(io, args, deps, fromClaude);
 }
 
 export async function main(argv: string[], io: CliIO): Promise<number> {
@@ -326,7 +277,7 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
     return 0;
   }
   if (command === 'hook') return hookEntry(args, flags, io);
-  if (command === 'statusline') return statuslineEntry(args, flags, io);
+  if (command === 'statusline') return statuslineCommand(io, args);
   try {
     let creds: Credentials | null;
     try {

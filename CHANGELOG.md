@@ -2,6 +2,8 @@
 
 ## 0.3.0 — unreleased
 
+- **A pane in Claude Code.** `/mokkan-pane` opens a live view of the stack inside Claude Code (docked beside the transcript in the fullscreen layout): tabs for todo, reminders and done, a pointer moved with the arrows or digits, Enter to mark done or reopen, one key per command, login and registration with a masked password. The plugin ships it as a hooks module next to the shell hooks.
+- **The status line is gone.** `mokkan statusline` no longer renders or configures anything. It stays for this release so that an earlier setup keeps working silently and can be undone: `mokkan statusline --remove` takes the 0.2.0 status line out of Claude Code's `settings.json` and `~/.tmux.conf` (backups first) and deletes the CLI copy in `~/.local/share/mokkan/`. The command disappears in the next release.
 - **`mokkan done <id…>` and `mokkan undone <id…>`.** Finish a reminder anywhere on the list (like `pop`, by id) and reopen a finished one at its old position; a reopened reminder with a due time comes back acknowledged and is never emailed again. Bare `mokkan done` still lists the history. Needs server `POST /reminders/:id/done`.
 
 ## 0.2.0

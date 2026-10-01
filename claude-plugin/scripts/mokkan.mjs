@@ -239,35 +239,35 @@ var MokkanClient = class {
     this.onCredentials?.(this.credentials);
     return this.credentials;
   }
-  async call(method, path5, body) {
-    const res = await this.raw(method, path5, body);
+  async call(method, path4, body) {
+    const res = await this.raw(method, path4, body);
     if (res.status >= 400) throw toApiError(res);
     return res.json;
   }
-  async authed(method, path5, body, timeoutMs) {
+  async authed(method, path4, body, timeoutMs) {
     if (!this.credentials) throw new ApiError(401, "no_credentials", "Not logged in. Run: mokkan login");
     const expiresAt = Date.parse(this.credentials.access_expires_at);
     if (Number.isFinite(expiresAt) && expiresAt - this.now().getTime() < REFRESH_AHEAD_MS) {
       await this.refresh();
     }
     const sentToken = this.credentials.access_token;
-    let res = await this.raw(method, path5, body, sentToken, timeoutMs);
+    let res = await this.raw(method, path4, body, sentToken, timeoutMs);
     if (res.status === 401) {
       if (this.refreshing || this.credentials?.access_token === sentToken) await this.refresh();
       if (!this.credentials) throw toApiError(res);
-      res = await this.raw(method, path5, body, this.credentials.access_token, timeoutMs);
+      res = await this.raw(method, path4, body, this.credentials.access_token, timeoutMs);
     }
     if (res.status >= 400) throw toApiError(res);
     return res.json;
   }
-  async raw(method, path5, body, token, timeoutMs = this.timeoutMs) {
+  async raw(method, path4, body, token, timeoutMs = this.timeoutMs) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const headers = { accept: "application/json" };
     if (body !== void 0) headers["content-type"] = "application/json";
     if (token) headers.authorization = `Bearer ${token}`;
     try {
-      const res = await this.fetchImpl(`${this.baseUrl}${path5}`, {
+      const res = await this.fetchImpl(`${this.baseUrl}${path4}`, {
         method,
         headers,
         body: body === void 0 ? void 0 : JSON.stringify(body),
@@ -847,7 +847,7 @@ function isTrustedCheckoutUrl(url) {
   const host = u.hostname.toLowerCase();
   return u.protocol === "https:" && (host === "checkout.stripe.com" || host.endsWith(".stripe.com"));
 }
-function openUrlDetached(url, platform = process.platform, env = process.env, spawn2 = nodeSpawn) {
+function openUrlDetached(url, platform = process.platform, env = process.env, spawn = nodeSpawn) {
   if (!isTrustedCheckoutUrl(url)) return false;
   let cmd;
   let args;
@@ -863,7 +863,7 @@ function openUrlDetached(url, platform = process.platform, env = process.env, sp
     args = [url];
   }
   try {
-    const child = spawn2(cmd, args, { detached: true, stdio: "ignore", windowsHide: true, env });
+    const child = spawn(cmd, args, { detached: true, stdio: "ignore", windowsHide: true, env });
     child.on("error", () => void 0);
     child.unref();
     return true;
@@ -939,138 +939,10 @@ async function heartbeatCommand(ctx) {
   return 0;
 }
 
-// src/statusline.ts
-import { spawn } from "node:child_process";
-
-// src/status-cache.ts
-import { chmodSync as chmodSync2, closeSync as closeSync2, mkdirSync as mkdirSync2, openSync as openSync2, readFileSync as readFileSync2, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2, writeSync as writeSync2 } from "node:fs";
-import { randomBytes as randomBytes2 } from "node:crypto";
-import path2 from "node:path";
-var REFRESH_LOCK_STALE_MS = 15e3;
-function statusCachePath(env = process.env) {
-  return path2.join(configDir(env), "status.json");
-}
-function refreshLockPath(env) {
-  return `${statusCachePath(env)}.lock`;
-}
-function readStatusCache(env = process.env) {
-  try {
-    const value = JSON.parse(readFileSync2(statusCachePath(env), "utf8"));
-    if (value?.v !== 2 || typeof value.server_url !== "string" || typeof value.email !== "string" || typeof value.attempted_at !== "string" || !Array.isArray(value.reminders)) return null;
-    return value;
-  } catch {
-    return null;
-  }
-}
-function writeStatusCache(cache, env = process.env) {
-  const dir = configDir(env);
-  mkdirSync2(dir, { recursive: true, mode: 448 });
-  const file = statusCachePath(env);
-  const tmp = `${file}.${process.pid}.${randomBytes2(6).toString("hex")}.tmp`;
-  writeFileSync2(tmp, `${JSON.stringify(cache)}
-`, { mode: 384 });
-  chmodSync2(tmp, 384);
-  renameSync2(tmp, file);
-}
-function invalidateStatusCache(env = process.env) {
-  try {
-    unlinkSync2(statusCachePath(env));
-  } catch {
-  }
-}
-function refreshInFlight(env = process.env) {
-  try {
-    return Date.now() - statSync2(refreshLockPath(env)).mtimeMs < REFRESH_LOCK_STALE_MS;
-  } catch {
-    return false;
-  }
-}
-function tryAcquireRefreshLock(env = process.env) {
-  const file = refreshLockPath(env);
-  mkdirSync2(configDir(env), { recursive: true, mode: 448 });
-  const owner = `${process.pid} ${randomBytes2(8).toString("hex")}
-`;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync2(file, "wx", 384);
-      try {
-        writeSync2(fd, owner);
-      } finally {
-        closeSync2(fd);
-      }
-      return () => {
-        try {
-          if (readFileSync2(file, "utf8") === owner) unlinkSync2(file);
-        } catch {
-        }
-      };
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-    }
-    if (refreshInFlight(env)) return null;
-    try {
-      unlinkSync2(file);
-    } catch {
-    }
-  }
-  return null;
-}
-
-// src/statusline.ts
-var DEFAULT_TTL_SECONDS = 30;
-var DEFAULT_GRACE_MINUTES = 15;
-var COLD_FETCH_TIMEOUT_MS = 800;
-var REFRESH_TIMEOUT_MS = 3e3;
+// src/text.ts
 var MAX_TEXT = 40;
-var RENDER_FLAGS = /* @__PURE__ */ new Set(["--render", "--format", "--no-text", "--width", "--ttl", "--grace", "--refresh"]);
-function isRenderInvocation(args) {
-  return args.some((a) => RENDER_FLAGS.has(a.split("=")[0]));
-}
-function parseStatusArgs(args, env) {
-  const opts = {
-    format: "ansi",
-    width: positiveInt(env.COLUMNS) ?? 0,
-    ttlMs: DEFAULT_TTL_SECONDS * 1e3,
-    graceMs: DEFAULT_GRACE_MINUTES * 6e4,
-    showText: true,
-    refresh: false
-  };
-  for (let i = 0; i < args.length; i++) {
-    const [name, inline] = args[i].split(/=(.*)/s, 2);
-    const value = () => inline ?? args[++i];
-    switch (name) {
-      case "--format": {
-        const v = value();
-        if (v === "ansi" || v === "tmux" || v === "plain") opts.format = v;
-        break;
-      }
-      case "--width":
-        opts.width = positiveInt(value()) ?? opts.width;
-        break;
-      case "--ttl":
-        opts.ttlMs = (positiveInt(value()) ?? DEFAULT_TTL_SECONDS) * 1e3;
-        break;
-      case "--grace":
-        opts.graceMs = (positiveInt(value()) ?? DEFAULT_GRACE_MINUTES) * 6e4;
-        break;
-      case "--no-text":
-        opts.showText = false;
-        break;
-      case "--refresh":
-        opts.refresh = true;
-        break;
-      default:
-        break;
-    }
-  }
-  return opts;
-}
-function positiveInt(raw) {
-  if (raw === void 0 || !/^\d+$/.test(raw)) return void 0;
-  const n = Number(raw);
-  return n > 0 ? n : void 0;
-}
 var LOW_CREDITS = 20;
+var DEFAULT_GRACE_MINUTES = 15;
 function cleanText(text, max = MAX_TEXT) {
   const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
@@ -1089,166 +961,10 @@ function formatWhen(at, now, timeZone) {
   const prefix = at.getTime() - now.getTime() < 6 * 864e5 ? at.toLocaleDateString("en-US", { timeZone, weekday: "short" }) : at.toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric" });
   return `${prefix} ${time}`;
 }
-var dueTime = (r) => r.due_at ? Date.parse(r.due_at) : NaN;
-function bodySegments(reminders, now, opts) {
-  if (reminders.length === 0) return [];
-  const t = now.getTime();
-  const unseen = reminders.filter((r) => r.state === "due" || r.state === "scheduled" && dueTime(r) <= t);
-  const tone = unseen.some((r) => t - dueTime(r) > opts.graceMs) ? "red" : unseen.length > 0 ? "yellow" : reminders.some((r) => r.state === "delivered") ? "dim" : "plain";
-  const latest = [...reminders].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.position - a.position)[0];
-  const more = reminders.length - 1;
-  if (!opts.showText) return [{ text: `${reminders.length} open`, tone }];
-  const when = latest.state === "scheduled" && dueTime(latest) > t ? ` @${formatWhen(new Date(dueTime(latest)), now, opts.timeZone)}` : "";
-  return [{ text: `"${cleanText(latest.text)}"${when}${more > 0 ? ` +${more} more` : ""}`, tone }];
-}
-function renderStatus(input, now, opts) {
-  let segments;
-  if (input.kind === "logged_out") segments = [{ text: "mokkan: logged out", tone: "dim" }];
-  else if (input.kind === "credentials_error") segments = [{ text: "mokkan: credentials error", tone: "dim" }];
-  else if (input.kind === "unavailable") segments = [{ text: "mokkan: \u2026", tone: "dim" }];
-  else segments = cacheSegments(input.cache, now, opts);
-  return paint(truncate(segments, opts.width), opts.format);
-}
-function cacheSegments(cache, now, opts) {
-  if (cache.error === "logged_out") return [{ text: "mokkan: logged out", tone: "dim" }];
-  const body = bodySegments(cache.reminders, now, opts);
-  const failed = cache.error !== null;
-  if (failed && cache.fetched_at === null) return [{ text: cache.error === "offline" ? "mokkan: offline" : "mokkan: error", tone: "dim" }];
-  const head = failed ? [{ text: `mokkan: ${cache.error === "offline" ? "offline" : "error"} (${formatAge(now.getTime() - Date.parse(cache.fetched_at))} old) \xB7 `, tone: "dim" }] : [{ text: "mokkan: ", tone: "plain" }];
-  const credits = failed ? [] : creditSegments(cache.credit_balance);
-  if (body.length === 0) return failed ? [...head, { text: "\u2713", tone: "green" }] : [{ text: "mokkan \u2713", tone: "green" }, ...credits];
-  return [...head, ...body, ...credits];
-}
 function creditSegments(balance) {
   if (typeof balance !== "number" || !Number.isFinite(balance)) return [];
   if (balance >= LOW_CREDITS) return [{ text: ` \xB7 ${balance} cr`, tone: "dim", keep: true }];
   return [{ text: ` \xB7 \u26A0 ${balance} cr \u2014 mokkan buy`, tone: balance <= 0 ? "red" : "yellow", keep: true }];
-}
-function truncate(segments, width) {
-  if (width <= 0) return segments;
-  const len = (list) => list.reduce((n, s) => n + [...s.text].length, 0);
-  if (len(segments) <= width) return segments;
-  const kept = segments.filter((s) => s.keep === true);
-  const reserved = len(kept);
-  if (kept.length > 0 && reserved < width) {
-    return [...cut(segments.filter((s) => s.keep !== true), width - reserved), ...kept];
-  }
-  return cut(segments, width);
-}
-function cut(segments, width) {
-  const out = [];
-  let left = width;
-  for (const s of segments) {
-    const chars = [...s.text];
-    if (chars.length <= left) {
-      out.push(s);
-      left -= chars.length;
-      continue;
-    }
-    if (left > 0) out.push({ text: `${chars.slice(0, left - 1).join("")}\u2026`, tone: s.tone });
-    break;
-  }
-  return out;
-}
-var ANSI = {
-  red: ["\x1B[31m", "\x1B[0m"],
-  yellow: ["\x1B[33m", "\x1B[0m"],
-  green: ["\x1B[32m", "\x1B[0m"],
-  dim: ["\x1B[2m", "\x1B[0m"],
-  plain: ["", ""]
-};
-var TMUX = {
-  red: ["#[fg=red]", "#[fg=default]"],
-  yellow: ["#[fg=yellow]", "#[fg=default]"],
-  green: ["#[fg=green]", "#[fg=default]"],
-  dim: ["#[dim]", "#[nodim]"],
-  plain: ["", ""]
-};
-function paint(segments, format) {
-  return segments.map(({ text, tone }) => {
-    if (format === "plain") return text;
-    if (format === "tmux") return `${TMUX[tone][0]}${text.replace(/#/g, "##")}${TMUX[tone][1]}`;
-    return `${ANSI[tone][0]}${text}${ANSI[tone][1]}`;
-  }).join("");
-}
-function slim(reminders) {
-  return reminders.filter((r) => r.state !== "done").map(({ id, text, state, position, due_at, created_at }) => ({ id, text, state, position, due_at, created_at }));
-}
-function classify(err) {
-  if (err instanceof NetworkError) return "offline";
-  if (err instanceof SessionExpiredError || err instanceof ApiError && err.code === "no_credentials") return "logged_out";
-  return "error";
-}
-async function refreshStatus(io, creds, makeClient2, timeoutMs) {
-  const base = { v: 2, server_url: resolveServerUrl(creds, io.env), email: creds.email, attempted_at: io.now().toISOString() };
-  let cache;
-  try {
-    const client = makeClient2(creds, timeoutMs);
-    const [list, me] = await Promise.all([client.list("all"), client.me().catch(() => null)]);
-    cache = { ...base, fetched_at: base.attempted_at, error: null, reminders: slim(list.reminders) };
-    if (typeof me?.credit_balance === "number") {
-      cache.credit_balance = me.credit_balance;
-    } else if (me === null) {
-      const prev = readStatusCache(io.env);
-      if (prev && prev.server_url === base.server_url && prev.email === base.email && prev.credit_balance !== void 0) {
-        cache.credit_balance = prev.credit_balance;
-      }
-    }
-  } catch (err) {
-    const prev = readStatusCache(io.env);
-    const same = prev && prev.server_url === base.server_url && prev.email === base.email;
-    cache = { ...base, fetched_at: same ? prev.fetched_at : null, error: classify(err), reminders: same ? prev.reminders : [] };
-    if (same && prev.credit_balance !== void 0) cache.credit_balance = prev.credit_balance;
-  }
-  writeStatusCache(cache, io.env);
-  return cache;
-}
-function spawnDetachedRefresh() {
-  const child = spawn(process.execPath, [...process.execArgv, process.argv[1], "statusline", "--render", "--refresh"], {
-    detached: true,
-    stdio: "ignore"
-  });
-  child.on("error", () => void 0);
-  child.unref();
-}
-async function statuslineCommand(io, args, makeClient2) {
-  const opts = parseStatusArgs(args, io.env);
-  const now = io.now();
-  const print = (input) => {
-    io.stdout(`${renderStatus(input, now, opts)}
-`);
-    return 0;
-  };
-  try {
-    let creds;
-    try {
-      creds = loadCredentials(io.env);
-    } catch {
-      return opts.refresh ? 0 : print({ kind: "credentials_error" });
-    }
-    if (opts.refresh) {
-      if (!creds) return 0;
-      const release = tryAcquireRefreshLock(io.env);
-      if (!release) return 0;
-      try {
-        await refreshStatus(io, creds, makeClient2, REFRESH_TIMEOUT_MS);
-      } finally {
-        release();
-      }
-      return 0;
-    }
-    if (!creds) return print({ kind: "logged_out" });
-    let cache = readStatusCache(io.env);
-    if (cache && (cache.server_url !== resolveServerUrl(creds, io.env) || cache.email !== creds.email)) cache = null;
-    if (!cache) {
-      cache = await refreshStatus(io, creds, makeClient2, COLD_FETCH_TIMEOUT_MS);
-    } else if (now.getTime() - Date.parse(cache.attempted_at) >= opts.ttlMs && !refreshInFlight(io.env)) {
-      (io.spawnRefresh ?? spawnDetachedRefresh)();
-    }
-    return print({ kind: "cache", cache });
-  } catch {
-    return opts.refresh ? 0 : print({ kind: "unavailable" });
-  }
 }
 
 // src/tui/state.ts
@@ -1391,7 +1107,7 @@ var GRACE_MS = DEFAULT_GRACE_MINUTES * 6e4;
 var HEADER_LEFT_MIN = 24;
 var LOGIN_FIELD_COLUMN = 13;
 var SGR = { red: "31", yellow: "33", green: "32", dim: "2", plain: "", bold: "1", reverse: "7" };
-function paint2(text, ...styles) {
+function paint(text, ...styles) {
   const codes = styles.map((s) => SGR[s]).filter((c) => c !== "");
   return codes.length === 0 || text === "" ? text : `\x1B[${codes.join(";")}m${text}\x1B[0m`;
 }
@@ -1399,7 +1115,7 @@ var part = (text, ...styles) => ({ text, styles });
 var partsWidth = (parts) => parts.reduce((n, p) => n + displayWidth(p.text), 0);
 var clean = (text) => cleanText(text, Number.MAX_SAFE_INTEGER);
 var blankControls = (text) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
-function cut2(parts, columns) {
+function cut(parts, columns) {
   const out = [];
   let left = columns;
   for (const p of parts) {
@@ -1414,16 +1130,16 @@ function cut2(parts, columns) {
   }
   return out;
 }
-var paintParts = (parts, extra) => parts.map((p) => paint2(p.text, ...p.styles, ...extra)).join("");
+var paintParts = (parts, extra) => parts.map((p) => paint(p.text, ...p.styles, ...extra)).join("");
 function line(left, right, columns, opts = {}) {
   const rw = partsWidth(right);
   const reserved = rw + (opts.minGap ?? 1);
   const keepRight = rw > 0 && columns - reserved >= (opts.minLeft ?? 8);
-  const l = cut2(left, keepRight ? columns - reserved : columns);
+  const l = cut(left, keepRight ? columns - reserved : columns);
   const r = keepRight ? right : [];
   const gap = " ".repeat(Math.max(0, columns - partsWidth(l) - partsWidth(r)));
   const extra = opts.rowStyle ? [opts.rowStyle] : [];
-  return paintParts(l, extra) + (opts.rowStyle ? paint2(gap, opts.rowStyle) : gap) + paintParts(r, extra);
+  return paintParts(l, extra) + (opts.rowStyle ? paint(gap, opts.rowStyle) : gap) + paintParts(r, extra);
 }
 function inputWindow(buffer, cursor, width) {
   const gs = graphemes(buffer);
@@ -2140,7 +1856,7 @@ var TuiApp = class {
 };
 
 // src/tui/terminal.ts
-import { writeSync as writeSync3 } from "node:fs";
+import { writeSync as writeSync2 } from "node:fs";
 
 // src/tui/keys.ts
 var PASTE_START = "\x1B[200~";
@@ -2306,7 +2022,7 @@ async function runTerminal(app, io, tty) {
     } catch {
     }
     try {
-      writeSync3(1, LEAVE_SCREEN);
+      writeSync2(1, LEAVE_SCREEN);
     } catch {
     }
   };
@@ -2392,8 +2108,8 @@ async function uiCommand(ctx) {
 }
 
 // src/hooks.ts
-import { appendFileSync, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import path3 from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import path2 from "node:path";
 var HOOK_BUDGET_MS = 8e3;
 var DELIVER_MIN_REMAINING_MS = 1500;
 var NOT_LOGGED_IN_LOG_INTERVAL_MS = 3600 * 1e3;
@@ -2418,7 +2134,7 @@ function formatStopDecision(due) {
 }
 function appendHookLog(env, kind, message) {
   const file = hookLogPath(env);
-  mkdirSync3(path3.dirname(file), { recursive: true, mode: 448 });
+  mkdirSync2(path2.dirname(file), { recursive: true, mode: 448 });
   appendFileSync(file, `${(/* @__PURE__ */ new Date()).toISOString()} ${kind} ${message}
 `, { mode: 384 });
 }
@@ -2427,7 +2143,7 @@ function notifiedMarkerPath(env, suffix = "") {
 }
 function notifiedRecently(env, suffix = "") {
   try {
-    const at = Date.parse(readFileSync3(notifiedMarkerPath(env, suffix), "utf8").trim());
+    const at = Date.parse(readFileSync2(notifiedMarkerPath(env, suffix), "utf8").trim());
     const age = Date.now() - at;
     return Number.isFinite(at) && age >= 0 && age < NOT_LOGGED_IN_LOG_INTERVAL_MS;
   } catch {
@@ -2435,7 +2151,7 @@ function notifiedRecently(env, suffix = "") {
   }
 }
 function markNotified(env, suffix = "") {
-  writeFileSync3(notifiedMarkerPath(env, suffix), `${(/* @__PURE__ */ new Date()).toISOString()}
+  writeFileSync2(notifiedMarkerPath(env, suffix), `${(/* @__PURE__ */ new Date()).toISOString()}
 `, { mode: 384 });
 }
 function safeAppendHookLog(env, kind, err) {
@@ -2538,605 +2254,109 @@ async function watchCommand(ctx) {
   return 0;
 }
 
-// src/statusline-setup.ts
-import {
-  accessSync,
-  chmodSync as chmodSync3,
-  constants,
-  copyFileSync,
-  existsSync as existsSync2,
-  mkdirSync as mkdirSync4,
-  readFileSync as readFileSync4,
-  realpathSync,
-  renameSync as renameSync3,
-  statSync as statSync3,
-  unlinkSync as unlinkSync3,
-  writeFileSync as writeFileSync4
-} from "node:fs";
-import { randomBytes as randomBytes3 } from "node:crypto";
+// src/statusline-remove.ts
+import { constants, copyFileSync, existsSync as existsSync2, readFileSync as readFileSync3, realpathSync, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import path4 from "node:path";
+import path3 from "node:path";
+function statuslineCommand(io, args) {
+  if (!args.includes("--remove")) {
+    if (io.isTTY) io.stdout("mokkan 0.3.0 has no status line. `mokkan statusline --remove` takes an earlier version's out of settings.json and ~/.tmux.conf.\n");
+    return 0;
+  }
+  const dryRun = args.includes("--dry-run");
+  const now = io.now();
+  const lines = [...removeClaude(io.env, now, dryRun), ...removeTmux(io.env, now, dryRun), ...removeStableCopy(io.env, dryRun)];
+  if (dryRun) lines.push("Dry run: nothing was written.");
+  io.stdout(`${lines.join("\n")}
+`);
+  return 0;
+}
 var TMUX_BEGIN = "# >>> mokkan status line >>>";
 var TMUX_END = "# <<< mokkan status line <<<";
-var REFRESH_INTERVAL_SECONDS = 30;
-var SETUP_FLAGS = /* @__PURE__ */ new Set(["--claude", "--tmux", "--codex", "--remove", "--dry-run", "--force"]);
-var SETUP_USAGE = "Usage: mokkan statusline [--claude] [--tmux|--codex] [--remove] [--dry-run] [--force]\n       mokkan statusline --render [--format ansi|tmux|plain] [--no-text] [--width N] [--ttl S] [--grace M]\n";
-function parseSetupArgs(args) {
-  const opts = { claude: false, tmux: false, auto: false, remove: false, dryRun: false, force: false, fromClaude: false };
-  for (const arg of args) {
-    if (!SETUP_FLAGS.has(arg)) return null;
-    if (arg === "--claude") opts.claude = true;
-    if (arg === "--tmux" || arg === "--codex") opts.tmux = true;
-    if (arg === "--remove") opts.remove = true;
-    if (arg === "--dry-run") opts.dryRun = true;
-    if (arg === "--force") opts.force = true;
-  }
-  if (!opts.claude && !opts.tmux) {
-    opts.claude = true;
-    opts.tmux = true;
-    opts.auto = true;
-  }
-  return opts;
-}
 function home(env) {
   return env.HOME && env.HOME !== "" ? env.HOME : homedir2();
 }
-function claudeConfigDir(env) {
-  return env.CLAUDE_CONFIG_DIR && env.CLAUDE_CONFIG_DIR !== "" ? env.CLAUDE_CONFIG_DIR : path4.join(home(env), ".claude");
-}
 function claudeSettingsPath(env) {
-  return path4.join(claudeConfigDir(env), "settings.json");
+  const dir = env.CLAUDE_CONFIG_DIR && env.CLAUDE_CONFIG_DIR !== "" ? env.CLAUDE_CONFIG_DIR : path3.join(home(env), ".claude");
+  return path3.join(dir, "settings.json");
 }
 function tmuxConfPath(env) {
-  const classic = path4.join(home(env), ".tmux.conf");
-  const xdgBase = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME !== "" ? env.XDG_CONFIG_HOME : path4.join(home(env), ".config");
-  const xdg = path4.join(xdgBase, "tmux", "tmux.conf");
+  const classic = path3.join(home(env), ".tmux.conf");
+  const xdgBase = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME !== "" ? env.XDG_CONFIG_HOME : path3.join(home(env), ".config");
+  const xdg = path3.join(xdgBase, "tmux", "tmux.conf");
   return !existsSync2(classic) && existsSync2(xdg) ? xdg : classic;
 }
 function stableCliPath(env) {
-  const base = env.XDG_DATA_HOME && env.XDG_DATA_HOME !== "" ? env.XDG_DATA_HOME : path4.join(home(env), ".local", "share");
-  return path4.join(base, "mokkan", "mokkan.mjs");
+  const base = env.XDG_DATA_HOME && env.XDG_DATA_HOME !== "" ? env.XDG_DATA_HOME : path3.join(home(env), ".local", "share");
+  return path3.join(base, "mokkan", "mokkan.mjs");
 }
-function pluginCacheDirs(env) {
-  const dirs = [path4.join(claudeConfigDir(env), "plugins", "cache"), path4.join(home(env), ".claude", "plugins", "cache")];
-  const out = /* @__PURE__ */ new Set();
-  for (const dir of dirs) {
-    out.add(dir);
-    try {
-      out.add(realpathSync(dir));
-    } catch {
-    }
-  }
-  return [...out];
-}
-var isInside = (file, dir) => {
-  const rel = path4.relative(dir, file);
-  return rel !== "" && !rel.startsWith("..") && !path4.isAbsolute(rel);
-};
-function inPluginCache(file, env) {
-  return pluginCacheDirs(env).some((dir) => isInside(file, dir));
-}
-function sameContent(a, b) {
-  try {
-    const sa = statSync3(a);
-    const sb = statSync3(b);
-    if (sa.size !== sb.size) return false;
-    return readFileSync4(a).equals(readFileSync4(b));
-  } catch {
-    return false;
-  }
-}
-function installCopy(source, target) {
-  if (sameContent(source, target)) return false;
-  mkdirSync4(path4.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.${randomBytes3(4).toString("hex")}.tmp`;
-  try {
-    copyFileSync(source, tmp);
-    chmodSync3(tmp, 493);
-    renameSync3(tmp, target);
-  } catch (err) {
-    try {
-      unlinkSync3(tmp);
-    } catch {
-    }
-    throw err;
-  }
-  return true;
-}
-var NpxCliError = class extends Error {
-  constructor(file) {
-    super(`mokkan is running from npx's temporary cache (${file}), which npm may delete at any time, so a status line must not point there. Run /mokkan:mokkan statusline in Claude Code (with the mokkan plugin), or npm i -g @vicmpen/mokkan-cli first and then mokkan statusline.`);
-  }
-};
-function resolveCliLocation(running, env, write) {
-  const real = realpathSync(running);
-  if (real.split(path4.sep).includes("_npx")) throw new NpxCliError(real);
-  if (!inPluginCache(real, env)) return { cli: real, copied: false };
-  const target = stableCliPath(env);
-  if (write) installCopy(real, target);
-  return { cli: target, copied: true };
-}
-function refreshStableCopy(running, env) {
-  const real = realpathSync(running);
-  const target = stableCliPath(env);
-  if (!inPluginCache(real, env) || !existsSync2(target)) return false;
-  return installCopy(real, target);
-}
-function onPath(name, env) {
-  for (const dir of (env.PATH ?? "").split(path4.delimiter)) {
-    if (dir === "") continue;
-    const file = path4.join(dir, name);
-    try {
-      accessSync(file, constants.X_OK);
-      return file;
-    } catch {
-    }
-  }
-  return null;
-}
-function nodeWord(node, env) {
-  try {
-    const found = onPath("node", env);
-    if (found !== null && realpathSync(found) === realpathSync(node)) return "node";
-  } catch {
-  }
-  return node;
-}
-function shellWord(word) {
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
-}
-function claudeCommand(node, cli) {
-  return `${shellWord(node)} ${shellWord(cli)} statusline --render`;
-}
-function tmuxWord(word) {
-  if (/[#'"$`\\\n]/.test(word)) throw new Error(`cannot use ${word} in a tmux status line (it contains # ' " $ \` or \\)`);
-  return /^[\w@%+=:,./-]+$/.test(word) ? word : `"${word}"`;
-}
-function tmuxBlock(node, cli) {
-  return [
-    TMUX_BEGIN,
-    "# Added by `mokkan statusline`; `mokkan statusline --remove --tmux` takes it out again.",
-    "set -g status-interval 15",
-    "set -g status-right-length 120",
-    `set -g status-right '${tmuxSnippet(node, cli)} %H:%M'`,
-    TMUX_END
-  ].join("\n");
-}
-function shellWords(command) {
-  const words = [];
-  let cur = "";
-  let started = false;
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i];
-    if (c === "'") {
-      const end = command.indexOf("'", i + 1);
-      if (end === -1) return null;
-      cur += command.slice(i + 1, end);
-      started = true;
-      i = end;
-    } else if (c === '"') {
-      const end = command.indexOf('"', i + 1);
-      if (end === -1) return null;
-      const inner = command.slice(i + 1, end);
-      if (/[$`\\]/.test(inner)) return null;
-      cur += inner;
-      started = true;
-      i = end;
-    } else if (/\s/.test(c)) {
-      if (started) {
-        words.push(cur);
-        cur = "";
-        started = false;
-      }
-    } else if (/[;&|<>()$`\\*?{}~#]/.test(c)) {
-      return null;
-    } else {
-      cur += c;
-      started = true;
-    }
-  }
-  if (started) words.push(cur);
-  return words;
-}
-var RENDER_WORDS = /^--(render|format|no-text|width|ttl|grace)(=.*)?$|^(ansi|tmux|plain|\d+)$/;
-function isMokkanCommand(command) {
-  const words = shellWords(command);
-  if (!words) return false;
-  const at = words.indexOf("statusline");
-  if (at < 1 || at > 2) return false;
-  const cli = words[at - 1];
-  const base = path4.basename(cli);
-  const cliLooksRight = base === "mokkan" || base === "mokkan.mjs" || /^cli\.m?js$/.test(base) && cli.includes("mokkan");
-  if (!cliLooksRight) return false;
-  if (at === 2 && !/^node(js)?(\d+)?(\.exe)?$/.test(path4.basename(words[0]))) return false;
-  return words.slice(at + 1).every((w) => RENDER_WORDS.test(w));
-}
-function timestamp(now) {
-  return now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
-}
-function backup(file, now) {
-  const base = `${file}.mokkan-bak-${timestamp(now)}`;
-  for (let n = 0; ; n++) {
-    const target = n === 0 ? base : `${base}-${n}`;
-    try {
-      copyFileSync(file, target, constants.COPYFILE_EXCL);
-      return target;
-    } catch (err) {
-      if (err.code !== "EEXIST") throw err;
-    }
-  }
-}
-function replaceFile(file, content, was, now) {
+function replaceFile(file, content, now) {
   let target = file;
   try {
     target = realpathSync(file);
   } catch {
   }
-  let mode = 420;
-  try {
-    mode = statSync3(target).mode & 511;
-  } catch {
-  }
-  mkdirSync4(path4.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.${randomBytes3(4).toString("hex")}.tmp`;
-  let bak = null;
-  try {
-    writeFileSync4(tmp, content, { mode });
-    chmodSync3(tmp, mode);
-    const current = existsSync2(file) ? readFileSync4(file, "utf8") : null;
-    if (current !== was) throw new Error(`${file} changed while mokkan was editing it; run the command again`);
-    if (was !== null) bak = backup(file, now);
-    renameSync3(tmp, target);
-  } catch (err) {
-    try {
-      unlinkSync3(tmp);
-    } catch {
-    }
-    if (bak !== null) {
-      try {
-        unlinkSync3(bak);
-      } catch {
-      }
-    }
-    throw err;
-  }
+  const mode = statSync2(target).mode & 511;
+  const stamp = now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
+  let bak = `${file}.mokkan-bak-${stamp}`;
+  for (let n = 1; existsSync2(bak); n++) bak = `${file}.mokkan-bak-${stamp}-${n}`;
+  copyFileSync(file, bak, constants.COPYFILE_EXCL);
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync3(tmp, content, { mode });
+  renameSync2(tmp, target);
   return bak;
 }
-function detectIndent(text) {
-  const m = /^[ \t]*[{[][^\n]*\n([ \t]+)\S/.exec(text);
-  return m ? m[1] : 2;
-}
-function readSettings(file) {
-  if (!existsSync2(file)) return { settings: {}, text: null };
-  const text = readFileSync4(file, "utf8");
-  if (text.trim() === "") return { settings: {}, text };
-  let value;
+var isMokkanCommand = (command) => /(^|[\s/])(mokkan|mokkan\.mjs|cli\.m?js)\s+statusline(\s|$)/.test(command) && command.includes("mokkan");
+function removeClaude(env, now, dryRun) {
+  const file = claudeSettingsPath(env);
+  if (!existsSync2(file)) return [];
+  const text = readFileSync3(file, "utf8");
+  let settings;
   try {
-    value = JSON.parse(text);
+    settings = JSON.parse(text);
   } catch {
-    return { error: `${file} is not valid JSON; fix it first (nothing was changed)` };
+    return [`Claude Code: ${file} is not valid JSON; left alone.`];
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { error: `${file} does not hold a JSON object; fix it first (nothing was changed)` };
-  }
-  return { settings: value, text };
-}
-function statusLineCommandOf(value) {
-  if (typeof value !== "object" || value === null) return void 0;
-  const cmd = value.command;
-  return typeof cmd === "string" ? cmd : void 0;
-}
-function writeSettings(file, settings, text, now) {
-  const indent = text !== null ? detectIndent(text) : 2;
-  return replaceFile(file, `${JSON.stringify(settings, null, indent)}
-`, text, now);
-}
-function configureClaude(s, opts) {
-  const file = claudeSettingsPath(s.env);
-  const read = readSettings(file);
-  if ("error" in read) return { lines: [`Claude Code: ${read.error}.`], failed: true, changed: false };
-  const { settings, text } = read;
+  if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return [`Claude Code: ${file} does not hold a JSON object; left alone.`];
   const current = settings.statusLine;
-  const currentCmd = statusLineCommandOf(current);
-  const ours = currentCmd !== void 0 && isMokkanCommand(currentCmd);
-  const command = claudeCommand(s.node, s.cli);
-  if (opts.remove) {
-    if (current === void 0) return { lines: [`Claude Code: no status line in ${file}; nothing to remove.`], failed: false, changed: false };
-    if (!ours) {
-      return { lines: [`Claude Code: the status line in ${file} is not mokkan's (${describe(current)}); left alone.`], failed: false, changed: false };
-    }
-    const next = { ...settings };
-    delete next.statusLine;
-    if (opts.dryRun) return { lines: [`Claude Code: would remove the mokkan status line from ${file}.`], failed: false, changed: true };
-    const bak2 = writeSettings(file, next, text, s.now);
-    return { lines: [`Claude Code: removed the mokkan status line from ${file}${bak2 ? ` (backup: ${bak2})` : ""}.`], failed: false, changed: true };
-  }
-  if (current !== void 0 && !ours && !opts.force) {
-    const lines = [
-      `Claude Code: ${file} already has a status line that is not mokkan's; left alone:`,
-      `  ${describe(current)}`
-    ];
-    if (currentCmd?.includes("statusline") && currentCmd.includes("mokkan") && !currentCmd.includes("--render")) {
-      lines.push("  It seems to call mokkan: change `statusline` to `statusline --render` there (the plain command now configures).");
-    } else {
-      lines.push(`  To show both, make your script also print the output of: ${command}`);
-    }
-    lines.push("  Or replace it: mokkan statusline --claude --force");
-    return { lines, failed: true, changed: false };
-  }
-  const prev = typeof current === "object" && current !== null && ours ? current : {};
-  const interval = typeof prev.refreshInterval === "number" ? prev.refreshInterval : REFRESH_INTERVAL_SECONDS;
-  const wanted = { ...prev, type: "command", command, refreshInterval: interval };
-  if (ours && JSON.stringify(current) === JSON.stringify(wanted)) {
-    return { lines: [`Claude Code: already configured in ${file}.`], failed: false, changed: false };
-  }
-  const verb = current === void 0 ? "add" : ours ? "update" : "replace";
-  const detail = `  "statusLine": ${JSON.stringify(wanted)}`;
-  const was = current !== void 0 ? [`  (was: ${describe(current)})`] : [];
-  if (opts.dryRun) {
-    return { lines: [`Claude Code: would ${verb} the status line in ${file}:`, detail, ...was], failed: false, changed: true };
-  }
-  const bak = writeSettings(file, { ...settings, statusLine: wanted }, text, s.now);
-  const done = { add: "added", update: "updated", replace: "replaced" }[verb];
-  return {
-    lines: [`Claude Code: ${done} the status line in ${file}${bak ? ` (backup: ${bak})` : ""}:`, detail, ...was],
-    failed: false,
-    changed: true
-  };
+  if (current === void 0) return [`Claude Code: no status line in ${file}; nothing to remove.`];
+  const cmd = typeof current === "object" && current !== null ? current.command : void 0;
+  if (typeof cmd !== "string" || !isMokkanCommand(cmd)) return [`Claude Code: the status line in ${file} is not mokkan's; left alone.`];
+  if (dryRun) return [`Claude Code: would remove the mokkan status line from ${file}.`];
+  const next = { ...settings };
+  delete next.statusLine;
+  const indent = /^[{[][^\n]*\n([ \t]+)\S/.exec(text)?.[1] ?? 2;
+  const bak = replaceFile(file, `${JSON.stringify(next, null, indent)}
+`, now);
+  return [`Claude Code: removed the mokkan status line from ${file} (backup: ${bak}). Restart Claude Code.`];
 }
-function describe(value) {
-  const cmd = statusLineCommandOf(value);
-  return cmd !== void 0 ? cmd : JSON.stringify(value);
-}
-function findBlock(lines) {
+function removeTmux(env, now, dryRun) {
+  const file = tmuxConfPath(env);
+  if (!existsSync2(file)) return [];
+  const text = readFileSync3(file, "utf8");
+  const lines = text.replace(/\n$/, "").split("\n");
   const trimmed = lines.map((l) => l.trimEnd());
   const start = trimmed.indexOf(TMUX_BEGIN);
   const end = trimmed.indexOf(TMUX_END);
-  if (start === -1 && end === -1) return null;
-  if (start === -1 || end === -1 || end < start) return "broken";
-  if (trimmed.indexOf(TMUX_BEGIN, start + 1) !== -1) return "broken";
-  return { start, end };
+  if (start === -1 && end === -1) return [`tmux: no mokkan block in ${file}; nothing to remove.`];
+  if (start === -1 || end === -1 || end < start) return [`tmux: ${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`];
+  const next = [...lines.slice(0, start), ...lines.slice(end + 1)];
+  if (start > 0 && next[start - 1]?.trim() === "" && (start === next.length || next[start]?.trim() === "")) next.splice(start - 1, 1);
+  if (dryRun) return [`tmux: would remove the mokkan block from ${file}.`];
+  const bak = replaceFile(file, next.length > 0 ? `${next.join("\n")}
+` : "", now);
+  return [`tmux: removed the mokkan block from ${file} (backup: ${bak}). Reload with: tmux source-file ${file}`];
 }
-function configureTmux(s, opts) {
-  const file = tmuxConfPath(s.env);
-  const text = existsSync2(file) ? readFileSync4(file, "utf8") : null;
-  const lines = text === null ? [] : text.replace(/\n$/, "").split("\n");
-  if (text === "") lines.length = 0;
-  const span = findBlock(lines);
-  if (span === "broken") {
-    return { lines: [`tmux: ${file} has an incomplete mokkan block (${TMUX_BEGIN} / ${TMUX_END}); fix it by hand (nothing was changed).`], failed: true, changed: false };
-  }
-  if (opts.remove) {
-    if (!span) return { lines: [`tmux: no mokkan block in ${file}; nothing to remove.`], failed: false, changed: false };
-    const next2 = [...lines.slice(0, span.start), ...lines.slice(span.end + 1)];
-    const blank = (l) => l !== void 0 && l.trim() === "";
-    if (span.start > 0 && blank(next2[span.start - 1]) && (span.start === next2.length || blank(next2[span.start]))) next2.splice(span.start - 1, 1);
-    if (opts.dryRun) return { lines: [`tmux: would remove the mokkan block from ${file}.`], failed: false, changed: true };
-    const bak2 = replaceFile(file, next2.length > 0 ? `${next2.join("\n")}
-` : "", text, s.now);
-    return { lines: [`tmux: removed the mokkan block from ${file} (backup: ${bak2}).`, ...reloadHint(file)], failed: false, changed: true };
-  }
-  let block;
-  try {
-    block = tmuxBlock(s.node, s.cli);
-  } catch (err) {
-    return { lines: [`tmux: ${err.message}; nothing was changed.`], failed: true, changed: false };
-  }
-  const blockLines = block.split("\n");
-  if (!span && !opts.force) {
-    const foreign = foreignTmuxConfig(lines);
-    if (foreign) {
-      const combine = [
-        `  To show mokkan there too, add this to your status-right: ${tmuxSnippet(s.node, s.cli)}`,
-        `  Or let mokkan's block override it: mokkan statusline --tmux --force`
-      ];
-      if (opts.auto) {
-        return { lines: [`tmux: skipped: ${file} ${foreign}, which mokkan's block would override.`, ...combine], failed: false, changed: false };
-      }
-      return { lines: [`tmux: ${file} ${foreign}; left alone (nothing was changed).`, ...combine], failed: true, changed: false };
-    }
-  }
-  let next;
-  if (span) {
-    if (lines.slice(span.start, span.end + 1).join("\n") === block) {
-      return { lines: [`tmux: already configured in ${file}.`, ...foreignNotes(lines, span)], failed: false, changed: false };
-    }
-    next = [...lines.slice(0, span.start), ...blockLines, ...lines.slice(span.end + 1)];
-  } else {
-    next = lines.length > 0 && lines[lines.length - 1] !== "" ? [...lines, "", ...blockLines] : [...lines, ...blockLines];
-  }
-  const newSpan = findBlock(next);
-  const notes = foreignNotes(next, newSpan);
-  const verb = span ? "update" : "add";
-  if (opts.dryRun) {
-    return { lines: [`tmux: would ${verb} this block in ${file}:`, ...blockLines.map((l) => `  ${l}`), ...notes], failed: false, changed: true };
-  }
-  const bak = replaceFile(file, `${next.join("\n")}
-`, text, s.now);
-  return {
-    lines: [`tmux: ${span ? "updated" : "added"} the mokkan block in ${file}${bak ? ` (backup: ${bak})` : ""}.`, ...notes, ...reloadHint(file)],
-    failed: false,
-    changed: true
-  };
-}
-var STATUS_RIGHT = /^\s*set(-option)?\s+(-\w+\s+)*status-right\s/;
-var TPM_RUN = /^\s*run(-shell)?\s.*\btpm\b/;
-var isOlderMokkanLine = (line2) => line2.includes("mokkan") || line2.includes("statusline");
-function foreignTmuxConfig(lines) {
-  const own = lines.findIndex((l) => STATUS_RIGHT.test(l) && !isOlderMokkanLine(l));
-  if (own !== -1) return `sets its own status-right (line ${own + 1})`;
-  const tpm = lines.findIndex((l) => TPM_RUN.test(l));
-  if (tpm !== -1) return `loads tmux plugins through TPM (line ${tpm + 1}), whose themes set status-right`;
-  return null;
-}
-function tmuxSnippet(node, cli) {
-  return `#(${tmuxWord(node)} ${tmuxWord(cli)} statusline --render --format tmux)`;
-}
-function foreignNotes(lines, span) {
-  const notes = [];
-  lines.forEach((line2, i) => {
-    if (i >= span.start && i <= span.end) return;
-    if (!STATUS_RIGHT.test(line2)) return;
-    if (i > span.end) {
-      notes.push(`  note: line ${i + 1} sets status-right after the mokkan block, so it hides mokkan.`);
-    } else if (isOlderMokkanLine(line2)) {
-      notes.push(`  note: line ${i + 1} is an older mokkan status-right (outside the block); the block overrides it, you can delete it.`);
-    } else {
-      notes.push(`  note: line ${i + 1} sets your own status-right; the mokkan block overrides it. To keep both, add #(...) from the block to yours and run mokkan statusline --remove --tmux.`);
-    }
-  });
-  return notes;
-}
-function reloadHint(file) {
-  return [`  If tmux is running, reload it: tmux source-file ${file}`];
-}
-function tmuxOnPath(env) {
-  return onPath("tmux", env) !== null;
-}
-function removeUnusedStableCopy(env) {
+function removeStableCopy(env, dryRun) {
   const stable = stableCliPath(env);
   if (!existsSync2(stable)) return [];
-  for (const file of [claudeSettingsPath(env), tmuxConfPath(env)]) {
-    try {
-      if (readFileSync4(file, "utf8").includes(stable)) return [];
-    } catch {
-    }
-  }
+  if (dryRun) return [`CLI: would remove the copy at ${stable}.`];
   try {
-    unlinkSync3(stable);
+    unlinkSync2(stable);
     return [`CLI: removed the copy at ${stable}.`];
   } catch (err) {
     return [`CLI: could not remove ${stable}: ${err.message}`];
   }
-}
-function statuslineSetupCommand(io, args, deps, fromClaude = false) {
-  const parsed = parseSetupArgs(args);
-  if (!parsed) {
-    io.stderr(SETUP_USAGE);
-    return 1;
-  }
-  const opts = { ...parsed, fromClaude };
-  const env = io.env;
-  let location;
-  try {
-    location = resolveCliLocation(deps.running, env, !opts.dryRun && !opts.remove);
-  } catch (err) {
-    if (err instanceof NpxCliError && opts.remove) {
-      location = { cli: deps.running, copied: false };
-    } else {
-      io.stderr(err instanceof NpxCliError ? `${err.message}
-` : `Cannot find the running mokkan CLI (${deps.running}): ${err.message}
-`);
-      return 1;
-    }
-  }
-  const s = { env, now: io.now(), node: nodeWord(deps.node, env), cli: location.cli };
-  const out = [];
-  let failed = false;
-  let claudeChanged = false;
-  let tmuxChanged = false;
-  const run2 = (label, fn) => {
-    try {
-      const o = fn();
-      out.push(...o.lines);
-      failed ||= o.failed;
-      return o;
-    } catch (err) {
-      out.push(`${label}: ${err.message}; nothing was changed.`);
-      failed = true;
-      return null;
-    }
-  };
-  if (opts.claude) {
-    if (opts.auto && !existsSync2(claudeConfigDir(env))) {
-      out.push(`Claude Code: ${claudeConfigDir(env)} does not exist; skipped (use --claude to set it up anyway).`);
-    } else {
-      claudeChanged = run2("Claude Code", () => configureClaude(s, opts))?.changed === true;
-    }
-  }
-  if (opts.tmux) {
-    if (opts.auto && opts.fromClaude && !opts.remove) {
-      out.push("tmux: not set up from Claude Code; add --tmux for the tmux block (Codex shows mokkan only inside tmux).");
-    } else if (opts.auto && !tmuxOnPath(env)) {
-      out.push("tmux: not installed; skipped (Codex shows mokkan only inside tmux; use --tmux to write the block anyway).");
-    } else {
-      tmuxChanged = run2("tmux", () => configureTmux(s, opts))?.changed === true;
-      if (!opts.remove) out.push("  Codex: its own footer cannot run commands; run Codex inside tmux to see mokkan in the tmux status bar.");
-    }
-  }
-  if (opts.remove && !opts.dryRun) out.push(...removeUnusedStableCopy(env));
-  if (location.copied && !opts.remove) {
-    out.push(opts.dryRun ? `CLI: would copy the plugin's CLI to ${location.cli} (the plugin path changes on every update).` : `CLI: the status line runs ${location.cli}, a copy of the plugin's CLI kept up to date by the plugin's SessionStart hook.`);
-  }
-  if (opts.dryRun) out.push("Dry run: nothing was written.");
-  else if (claudeChanged) out.push("Restart Claude Code (or open a new session) to see the status line.");
-  io.stdout(`${out.join("\n")}
-`);
-  return failed ? 1 : 0;
-}
-var MIGRATE_RETRY_MS = 24 * 60 * 60 * 1e3;
-function migrateStampPath(env) {
-  return path4.join(configDir(env), "statusline-migrate-failed");
-}
-function recentMigrateFailure(env, now) {
-  try {
-    const at = Date.parse(readFileSync4(migrateStampPath(env), "utf8").trim());
-    return Number.isFinite(at) && now.getTime() - at < MIGRATE_RETRY_MS && now.getTime() >= at;
-  } catch {
-    return false;
-  }
-}
-function stampMigrateFailure(env, now) {
-  try {
-    mkdirSync4(configDir(env), { recursive: true, mode: 448 });
-    writeFileSync4(migrateStampPath(env), `${now.toISOString()}
-`, { mode: 384 });
-  } catch {
-  }
-}
-function migrateLegacyInvocation(io, deps) {
-  let cmd;
-  try {
-    const file = claudeSettingsPath(io.env);
-    if (!existsSync2(file)) return false;
-    const read = readSettings(file);
-    if ("error" in read) return false;
-    cmd = statusLineCommandOf(read.settings.statusLine);
-  } catch {
-    return false;
-  }
-  if (cmd === void 0 || !isMokkanCommand(cmd)) return false;
-  if (/(^|\s)--render(\s|$)/.test(cmd)) return true;
-  const now = io.now();
-  if (recentMigrateFailure(io.env, now)) return true;
-  try {
-    const location = resolveCliLocation(deps.running, io.env, true);
-    const outcome = configureClaude(
-      { env: io.env, now, node: nodeWord(deps.node, io.env), cli: location.cli },
-      { claude: true, tmux: false, auto: false, remove: false, dryRun: false, force: false, fromClaude: false }
-    );
-    if (outcome.failed) stampMigrateFailure(io.env, now);
-    else {
-      try {
-        unlinkSync3(migrateStampPath(io.env));
-      } catch {
-      }
-    }
-  } catch {
-    stampMigrateFailure(io.env, now);
-  }
-  return true;
-}
-function nonTerminalHint(env) {
-  let text = "";
-  try {
-    text = readFileSync4(claudeSettingsPath(env), "utf8");
-  } catch {
-  }
-  if (text.includes("statusline") && !text.includes("--render")) {
-    return 'mokkan: run "mokkan statusline" in a terminal to update this status line';
-  }
-  return 'mokkan: nothing was set up without a terminal; run "mokkan statusline" in one, or "mokkan statusline --claude" (or --tmux) here';
 }
 
 // src/cli.ts
@@ -3213,13 +2433,7 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
-  mokkan statusline [--claude] [--tmux|--codex] [--remove] [--dry-run] [--force]
-                                  set up the status line: Claude Code's settings.json, plus a marked block in
-                                  ~/.tmux.conf when tmux is installed and has no status-right or TPM of its own
-                                  (Codex shows it through tmux); backups first, never replaces a status line that
-                                  is not mokkan's without --force; from /mokkan only Claude Code unless --tmux
-  mokkan statusline --render [--format ansi|tmux|plain] [--no-text] [--width N] [--ttl S] [--grace M]
-                                  print the one-line summary (what the status line runs; always exits 0)
+  mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
 
   --exit-zero                     report errors on stdout and always exit 0 (for the /mokkan slash command)
   --argline "<words>"             first argument only: split the string on whitespace and use it as the arguments
@@ -3271,7 +2485,6 @@ function defaultIO() {
     },
     env: process.env,
     isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-    stdinIsTTY: Boolean(process.stdin.isTTY),
     prompt: promptLine,
     readStdin: readAllStdin,
     now: () => /* @__PURE__ */ new Date(),
@@ -3313,7 +2526,6 @@ function makeClient(creds, io, timeoutMs, signal) {
     reloadCredentials: () => loadCredentials(io.env),
     lock: (fn, lockSignal) => withCredentialsLock(io.env, fn, { signal: lockSignal }),
     onSessionExpired: () => clearCredentials(io.env),
-    onListChanged: () => invalidateStatusCache(io.env),
     fetchImpl: io.fetchImpl,
     now: io.now,
     timeoutMs,
@@ -3326,12 +2538,6 @@ async function hookEntry(args, flags, io) {
     io.stderr("Usage: mokkan hook session-start|stop\n");
     return 1;
   }
-  if (kind === "session-start") {
-    try {
-      refreshStableCopy(setupDeps(io).running, io.env);
-    } catch {
-    }
-  }
   try {
     const deadlineAt = Date.now() + HOOK_BUDGET_MS;
     const client = makeClient(loadCredentials(io.env), io, 3e3, AbortSignal.timeout(HOOK_BUDGET_MS));
@@ -3340,22 +2546,6 @@ async function hookEntry(args, flags, io) {
     safeAppendHookLog(io.env, kind, err);
     return 0;
   }
-}
-function setupDeps(io) {
-  return { running: io.cliPath ?? process.argv[1] ?? "", node: io.nodePath ?? process.execPath };
-}
-async function statuslineEntry(args, flags, io) {
-  const render2 = () => statuslineCommand(io, args, (creds, timeoutMs) => makeClient(creds, io, timeoutMs));
-  if (isRenderInvocation(args)) return render2();
-  const deps = setupDeps(io);
-  const fromClaude = flags["exit-zero"] === true;
-  if (args.length === 0 && !(io.stdinIsTTY ?? io.isTTY) && !fromClaude) {
-    if (migrateLegacyInvocation(io, deps)) return render2();
-    io.stdout(`${nonTerminalHint(io.env)}
-`);
-    return 0;
-  }
-  return statuslineSetupCommand(io, args, deps, fromClaude);
 }
 async function main(argv, io) {
   const parsed = parseArgs(argv);
@@ -3369,7 +2559,7 @@ async function run({ command, args, flags }, io) {
     return 0;
   }
   if (command === "hook") return hookEntry(args, flags, io);
-  if (command === "statusline") return statuslineEntry(args, flags, io);
+  if (command === "statusline") return statuslineCommand(io, args);
   try {
     let creds;
     try {

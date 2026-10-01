@@ -39,7 +39,6 @@ describe('plugin CLI bundle (claude-plugin/scripts/mokkan.mjs)', () => {
         env: { PATH: process.env.PATH, HOME: home, XDG_CONFIG_HOME: path.join(home, '.config') },
       });
       expect(out).toContain('Usage: mokkan');
-      expect(out).toContain('statusline');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

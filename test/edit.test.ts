@@ -225,15 +225,6 @@ describe('mokkan edit', () => {
     expect(r.code).toBe(3);
     expect(r.stderr).toContain('mokkan buy');
   });
-
-  it('invalidates the status cache', async () => {
-    setup();
-    await run(['statusline', '--render']);
-    const before = server.count('GET', '/reminders');
-    await run(['edit', '1', 'x']);
-    await run(['statusline', '--render']);
-    expect(server.count('GET', '/reminders')).toBeGreaterThan(before + 1);
-  });
 });
 
 describe('fake PATCH /reminders/:id follows the contract', () => {

@@ -1,7 +1,7 @@
 {
   "name": "@vicmpen/mokkan-cli",
   "version": "0.3.0",
-  "description": "Cross-session reminders for Claude Code, Codex and your terminal: a synced stack of notes, scheduled email reminders and a status line.",
+  "description": "Cross-session reminders for Claude Code, Codex and your terminal: a synced stack of notes and scheduled email reminders.",
   "keywords": [
     "reminders",
     "todo",
@@ -9,7 +9,6 @@
     "claude-code",
     "claude-code-plugin",
     "codex",
-    "statusline",
     "tmux"
   ],
   "homepage": "https://github.com/vicmpen/mokkan#readme",
@@ -45,7 +44,8 @@
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && npm run typecheck && npm test && npm run check:bundle"
+    "prepublishOnly": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && npm run typecheck && npm test && npm run check:bundle",
+    "test:plugin": "claude plugin validate claude-plugin && claude plugin test claude-plugin"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

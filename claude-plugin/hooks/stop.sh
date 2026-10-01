@@ -3,8 +3,7 @@
 # Never fails the session: the CLI exits 0 on every error and logs to ~/.config/mokkan/hook.log.
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 1. The plugin's own bundle (always present in an installed plugin). Running it by path keeps process.argv[1] inside
-#    the plugin cache, so the session-start hook can refresh the stable copy the status line uses.
+# 1. The plugin's own bundle (always present in an installed plugin).
 # 2. A dev checkout's build (dist/ next to claude-plugin/).
 # 3. `mokkan` on PATH, last: it may be an unrelated program (e.g. Ubuntu's calendar program is `remind`, not ours).
 if command -v node >/dev/null 2>&1; then

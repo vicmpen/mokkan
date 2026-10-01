@@ -61,11 +61,3 @@ Slash command: /mokkan is available in every session via ~/.claude/commands/mokk
 Next: start the server (see the mokkan-server repo README), then run:  mokkan register you@example.com
 MSG
 
-# The status line is set up by the CLI itself, on request: it edits ~/.claude/settings.json and a marked block of
-# ~/.tmux.conf (backups first, never replacing a status line that is not mokkan's). install.sh writes neither.
-cat <<MSG
-
-Status line (latest reminder, credits):  mokkan statusline
-  Writes Claude Code's statusLine (~/.claude/settings.json) and, if tmux is installed, a marked block in ~/.tmux.conf
-  (Codex shows mokkan only inside tmux). Preview with --dry-run, undo with --remove; backups are kept next to each file.
-MSG

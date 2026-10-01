@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatWhen } from '../src/statusline.js';
+import { formatWhen } from '../src/text.js';
 import { cursorPosition, inputWindow, render } from '../src/tui/screen.js';
 import { initialState, type TuiState } from '../src/tui/state.js';
 import type { Reminder } from '../src/types.js';

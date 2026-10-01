@@ -4,7 +4,7 @@ import { isTrustedCheckoutUrl } from '../commands/billing.js';
 import { parseDuration } from '../duration.js';
 import { SessionExpiredError } from '../errors.js';
 import { formatRelative, shortId } from '../format.js';
-import { cleanText } from '../statusline.js';
+import { cleanText } from '../text.js';
 import type { CheckoutResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';

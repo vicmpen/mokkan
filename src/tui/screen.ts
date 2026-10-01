@@ -1,4 +1,4 @@
-import { cleanText, creditSegments, formatAge, formatWhen, DEFAULT_GRACE_MINUTES, type Tone } from '../statusline.js';
+import { cleanText, creditSegments, formatAge, formatWhen, DEFAULT_GRACE_MINUTES, type Tone } from '../text.js';
 import type { Reminder } from '../types.js';
 import { ACTIVE_STATES, CHROME_ROWS, rowsOf, type Size, type Tab, type TuiState } from './state.js';
 import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
