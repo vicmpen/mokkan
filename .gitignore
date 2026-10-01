@@ -4,3 +4,5 @@ dist/
 *.log
 .superpowers/
 coverage/
+# written by Claude Code when the plugin loads from this checkout
+claude-plugin/.claude-plugin/types/
