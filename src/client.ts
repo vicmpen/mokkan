@@ -225,6 +225,13 @@ export class MokkanClient {
 
   deliver(ids: string[]): Promise<DeliverResponse> { return this.changing(this.authed('POST', '/reminders/deliver', { ids })); }
 
+  /** `done: true` finishes one reminder as pop does; `false` reopens a done one at its old position. Free. */
+  setDone(id: string, done: boolean, expectedVersion?: number): Promise<ReminderResponse> {
+    const body: Record<string, unknown> = { done };
+    if (expectedVersion !== undefined) body.expected_version = expectedVersion;
+    return this.changing(this.authed('POST', `/reminders/${encodeURIComponent(id)}/done`, body));
+  }
+
   ack(idsOrAll: string[] | 'all', expectedVersion?: number): Promise<AckResponse> {
     const body: Record<string, unknown> = idsOrAll === 'all' ? { all: true } : { ids: idsOrAll };
     if (expectedVersion !== undefined) body.expected_version = expectedVersion;

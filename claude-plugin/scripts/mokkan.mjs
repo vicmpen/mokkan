@@ -210,6 +210,12 @@ var MokkanClient = class {
   deliver(ids) {
     return this.changing(this.authed("POST", "/reminders/deliver", { ids }));
   }
+  /** `done: true` finishes one reminder as pop does; `false` reopens a done one at its old position. Free. */
+  setDone(id, done, expectedVersion) {
+    const body = { done };
+    if (expectedVersion !== void 0) body.expected_version = expectedVersion;
+    return this.changing(this.authed("POST", `/reminders/${encodeURIComponent(id)}/done`, body));
+  }
   ack(idsOrAll, expectedVersion) {
     const body = idsOrAll === "all" ? { all: true } : { ids: idsOrAll };
     if (expectedVersion !== void 0) body.expected_version = expectedVersion;
@@ -678,7 +684,8 @@ function resolvePrefixes(reminders, prefixes, listCommand2 = "mokkan list") {
   const ids = /* @__PURE__ */ new Set();
   for (const prefix of prefixes) {
     const matches = reminders.filter((r) => r.id.startsWith(prefix));
-    if (matches.length === 0) throw new UserError(`No ${listCommand2 === "mokkan list" ? "active " : ""}reminder matches "${prefix}" (run: ${listCommand2})`);
+    const kind = listCommand2 === "mokkan list" ? "active " : listCommand2 === "mokkan done" ? "finished " : "";
+    if (matches.length === 0) throw new UserError(`No ${kind}reminder matches "${prefix}" (run: ${listCommand2})`);
     if (matches.length > 1) throw new UserError(`"${prefix}" is ambiguous: ${matches.map((r) => shortId(r.id)).sort().join(", ")}`);
     ids.add(matches[0].id);
   }
@@ -695,6 +702,38 @@ async function ackCommand(ctx, args) {
   ctx.io.stdout(ctx.json ? `${JSON.stringify({ acknowledged })}
 ` : `Acknowledged ${acknowledged.length} reminder(s).
 `);
+  return 0;
+}
+async function markDoneCommand(ctx, args, done) {
+  const verb = done ? "done" : "undone";
+  if (args.length === 0) throw new UserError(`Usage: mokkan ${verb} <id-prefix>...`);
+  const changed = [];
+  for (let attempt = 0; ; attempt++) {
+    const list = await ctx.client.list(done ? "all" : "done");
+    const ids = resolvePrefixes(list.reminders, args, done ? "mokkan list --all" : "mokkan done");
+    try {
+      let version = list.version;
+      for (const id of ids) {
+        const res = await ctx.client.setDone(id, done, version);
+        version = res.version;
+        changed.push(res.reminder);
+      }
+      break;
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "stale" && attempt === 0) {
+        changed.length = 0;
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (ctx.json) {
+    ctx.io.stdout(`${JSON.stringify({ [done ? "done" : "reopened"]: changed.map((r) => r.id) })}
+`);
+  } else {
+    for (const r of changed) ctx.io.stdout(`${done ? "Done" : "Reopened"} [${shortId(r.id)}] ${r.text}
+`);
+  }
   return 0;
 }
 async function ackWithRetry(ctx, prefixes) {
@@ -3155,7 +3194,9 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan pop                      remove from the top (LIFO)
   mokkan dequeue                  remove from the bottom (FIFO)
   mokkan in <duration> <text>     schedule: 30s, 10m, 2h, 1d, 1h30m
-  mokkan ack <id-prefix>... | all acknowledge shown reminders
+  mokkan ack <id-prefix>... | all acknowledge shown reminders (they stay on the list)
+  mokkan done <id-prefix>...      finish reminders anywhere on the list (like pop, by id)
+  mokkan undone <id-prefix>...    reopen finished reminders at their old position
   mokkan edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text...]
                                   change text and/or time of a reminder in one call; n = number in
                                   mokkan list (mokkan list --all with --all), or an id prefix
@@ -3351,7 +3392,9 @@ Logged out.
       case "list":
         return await listCommand(ctx);
       case "done":
-        return await doneCommand(ctx);
+        return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
+      case "undone":
+        return await markDoneCommand(ctx, args, false);
       case "pending":
         return await pendingCommand(ctx);
       case "ui": {

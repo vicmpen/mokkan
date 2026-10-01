@@ -53,7 +53,8 @@ export function resolvePrefixes(reminders: Reminder[], prefixes: string[], listC
   const ids = new Set<string>();
   for (const prefix of prefixes) {
     const matches = reminders.filter((r) => r.id.startsWith(prefix));
-    if (matches.length === 0) throw new UserError(`No ${listCommand === 'mokkan list' ? 'active ' : ''}reminder matches "${prefix}" (run: ${listCommand})`);
+    const kind = listCommand === 'mokkan list' ? 'active ' : listCommand === 'mokkan done' ? 'finished ' : '';
+    if (matches.length === 0) throw new UserError(`No ${kind}reminder matches "${prefix}" (run: ${listCommand})`);
     if (matches.length > 1) throw new UserError(`"${prefix}" is ambiguous: ${matches.map((r) => shortId(r.id)).sort().join(', ')}`);
     ids.add(matches[0].id);
   }
@@ -69,6 +70,39 @@ export async function ackCommand(ctx: Ctx, args: string[]): Promise<number> {
     acknowledged = await ackWithRetry(ctx, args);
   }
   ctx.io.stdout(ctx.json ? `${JSON.stringify({ acknowledged })}\n` : `Acknowledged ${acknowledged.length} reminder(s).\n`);
+  return 0;
+}
+
+/**
+ * `mokkan done <id-prefix>...` finishes reminders one by one (as pop does, but anywhere on the list);
+ * `mokkan undone <id-prefix>...` reopens finished ones at their old position. Prefixes resolve against the open
+ * list (`mokkan list --all`) for done and the history (`mokkan done`) for undone. Both free.
+ */
+export async function markDoneCommand(ctx: Ctx, args: string[], done: boolean): Promise<number> {
+  const verb = done ? 'done' : 'undone';
+  if (args.length === 0) throw new UserError(`Usage: mokkan ${verb} <id-prefix>...`);
+  const changed: Reminder[] = [];
+  for (let attempt = 0; ; attempt++) {
+    const list = await ctx.client.list(done ? 'all' : 'done');
+    const ids = resolvePrefixes(list.reminders, args, done ? 'mokkan list --all' : 'mokkan done');
+    try {
+      let version = list.version;
+      for (const id of ids) {
+        const res = await ctx.client.setDone(id, done, version);
+        version = res.version;
+        changed.push(res.reminder);
+      }
+      break;
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'stale' && attempt === 0) { changed.length = 0; continue; }
+      throw err;
+    }
+  }
+  if (ctx.json) {
+    ctx.io.stdout(`${JSON.stringify({ [done ? 'done' : 'reopened']: changed.map((r) => r.id) })}\n`);
+  } else {
+    for (const r of changed) ctx.io.stdout(`${done ? 'Done' : 'Reopened'} [${shortId(r.id)}] ${r.text}\n`);
+  }
   return 0;
 }
 

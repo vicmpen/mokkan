@@ -73,6 +73,7 @@ mokkan pop | dequeue                   remove from the top (LIFO) | from the bot
 mokkan in <duration> <text>            schedule: 30s, 10m, 2h, 1d, 1h30m
 mokkan edit <n|id> [--all] [--in 2h | --at <iso> | --clear-due] [new text...]
 mokkan ack <id...> | all               acknowledge reminders you have seen
+mokkan done <id...> | undone <id...>   finish reminders anywhere on the list (like pop, by id) | reopen finished ones
 mokkan pending | done                  due and not yet shown | finished reminders
 mokkan balance | buy                   credits
 mokkan statusline                      set up the status line (see below)
@@ -80,6 +81,8 @@ mokkan ui                              full-screen view with keyboard actions (s
 ```
 
 Add `--json` for machine-readable output. `mokkan help` lists everything.
+
+Acknowledging and finishing are different acts. `mokkan ack` says "seen": it stops the email for a due reminder and releases its reserved credit, but the reminder stays on the list. `mokkan done <id>` finishes a reminder anywhere on the list, exactly as `pop` finishes the top one; it moves to the history that `mokkan done` shows. `mokkan undone <id>` puts a finished reminder back where it was. A reopened reminder that had a due time comes back acknowledged, so it is never emailed again. Both are free.
 
 `mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
 
@@ -112,7 +115,7 @@ mokkan uses prepaid credits. **€5 buys 500 credits** (1 credit = 1 cent). A ne
 | `push` | 1 credit |
 | `edit` | 1 credit per 3 edits (every 3rd edit is charged) |
 | Scheduled reminder email | 1 credit, charged only when the email is actually sent |
-| `pop`, `dequeue`, `ack`, `list`, `pending`, `done`, `status`, `balance` | free |
+| `pop`, `dequeue`, `done`, `undone`, `ack`, `list`, `pending`, `status`, `balance` | free |
 
 A reminder with a due time keeps 1 credit in reserve for its email until the email is sent or you acknowledge the reminder (`mokkan ack` releases it). So scheduling needs the push cost plus 1 credit for every reminder that is still waiting, plus 1 for the new one. When your balance is too low, a paid command exits with code 3 and tells you to run `mokkan buy`. Reading and acknowledging always stay free.
 

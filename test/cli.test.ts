@@ -269,6 +269,40 @@ describe('mokkan CLI', () => {
     expect(res.stdout).toBe('Acknowledged 2 reminder(s).\n');
   });
 
+  it('done finishes reminders by id prefix against the open list, chaining versions; undone reopens from the history', async () => {
+    server.on('GET', '/reminders', () => ({ status: 200, body: { version: 5, reminders: [r3, r2, r1] } }));
+    let version = 5;
+    server.on('POST', '/reminders/:id/done', (req) => {
+      const id = req.path.split('/')[2];
+      const r = [r1, r2, r3].find((x) => x.id === id)!;
+      const body = req.body as { done: boolean };
+      return { status: 200, body: { version: ++version, reminder: { ...r, state: body.done ? 'done' : 'due' } } };
+    });
+    const res = await h.run(['done', 'aaaa1', 'aaaa2222'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(0);
+    expect(res.stdout).toBe('Done [aaaa1111] first\nDone [aaaa2222] second\n');
+    const calls = server.requests.filter((q) => q.method === 'POST' && q.path.endsWith('/done'));
+    expect(calls.map((q) => q.path)).toEqual([`/reminders/${r1.id}/done`, `/reminders/${r2.id}/done`]);
+    expect(calls.map((q) => q.body)).toEqual([{ done: true, expected_version: 5 }, { done: true, expected_version: 6 }]);
+    expect(server.last('GET', '/reminders')?.query.get('scope')).toBe('all');
+
+    const back = await h.run(['undone', 'aaaa1', '--json'], { serverUrl: server.url, loggedIn: true });
+    expect(back.code).toBe(0);
+    expect(JSON.parse(back.stdout)).toEqual({ reopened: [r1.id] });
+    expect(server.last('GET', '/reminders')?.query.get('scope')).toBe('done');
+    expect(server.last('POST', `/reminders/${r1.id}/done`)?.body).toEqual({ done: false, expected_version: 5 });
+  });
+
+  it('bare `mokkan done` still lists the history; done/undone without ids print usage', async () => {
+    server.on('GET', '/reminders', (req) => ({ status: 200, body: { version: 1, reminders: req.query.get('scope') === 'done' ? [r1] : [] } }));
+    const hist = await h.run(['done'], { serverUrl: server.url, loggedIn: true });
+    expect(hist.code).toBe(0);
+    expect(hist.stdout).toContain('first');
+    const res = await h.run(['undone'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain('Usage: mokkan undone <id-prefix>...');
+  });
+
   it('ack rejects ambiguous and unknown prefixes', async () => {
     server.on('GET', '/reminders', () => ({ status: 200, body: { version: 5, reminders: [r3, r2, r1] } }));
     let res = await h.run(['ack', 'aaaa22'], { serverUrl: server.url, loggedIn: true });

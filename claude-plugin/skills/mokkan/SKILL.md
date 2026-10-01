@@ -1,7 +1,7 @@
 ---
 name: mokkan
 description: Cross-session reminders (mokkan) — list, push, pop, dequeue, schedule (in), edit, ack, pending, done, status, balance, buy, register, login, logout, statusline (set up the mokkan status line). Use when the user asks to remember something for later, to add, list, change, schedule or acknowledge a reminder, about their mokkan credits, or to show the mokkan status line; pass the mokkan command and its arguments. Never pass --force, logout or buy unless the user typed them.
-argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | pending | done | status | balance | buy | register <email> | login <email> | logout | statusline [--dry-run | --remove]]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
+argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | done [<id>...] | undone <id>... | pending | status | balance | buy | register <email> | login <email> | logout | statusline [--dry-run | --remove]]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" *)
 ---
 ## Output of `mokkan $ARGUMENTS`
@@ -16,7 +16,7 @@ When the user asks to show, add or set up the mokkan status line, the command is
 
 ## Credits (paid use)
 
-Reminders run on prepaid credits: €5 buys 500 credits, and every new account starts with 50. Prices: `push` costs 1 credit; every 3rd edit costs 1 credit; a scheduled reminder's email costs 1 credit, charged only when it is actually sent (every reminder with a due time that has not been emailed and is not acknowledged, whether scheduled, due or shown but not yet acknowledged, keeps 1 credit in reserve; `mokkan ack` releases it; scheduling needs the push cost plus 1 × (those reminders + 1)). `pop`, `dequeue`, `ack`, `list`, `pending`, `done` and `status` are free. `mokkan balance` shows the balance and recent transactions.
+Reminders run on prepaid credits: €5 buys 500 credits, and every new account starts with 50. Prices: `push` costs 1 credit; every 3rd edit costs 1 credit; a scheduled reminder's email costs 1 credit, charged only when it is actually sent (every reminder with a due time that has not been emailed and is not acknowledged, whether scheduled, due or shown but not yet acknowledged, keeps 1 credit in reserve; `mokkan ack` releases it; scheduling needs the push cost plus 1 × (those reminders + 1)). `pop`, `dequeue`, `done`, `undone`, `ack`, `list`, `pending` and `status` are free. `done <id>` finishes a reminder anywhere on the list (ack only silences it and keeps it); `undone <id>` reopens a finished one. `mokkan balance` shows the balance and recent transactions.
 
 This section is for advising the user; it does not allow you to run anything beyond the command above.
 

@@ -10,7 +10,7 @@ import { UserError } from './errors.js';
 import { promptLine, readAllStdin } from './prompt.js';
 import { loginCommand, logoutCommand, registerCommand, statusCommand } from './commands/auth.js';
 import { doneCommand, listCommand, pendingCommand } from './commands/list.js';
-import { ackCommand, editCommand, inCommand, pushCommand, takeCommand } from './commands/mutate.js';
+import { ackCommand, editCommand, inCommand, pushCommand, takeCommand, markDoneCommand } from './commands/mutate.js';
 import { balanceCommand, buyCommand, openUrlDetached } from './commands/billing.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
 import { uiCommand } from './commands/ui.js';
@@ -147,7 +147,9 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan pop                      remove from the top (LIFO)
   mokkan dequeue                  remove from the bottom (FIFO)
   mokkan in <duration> <text>     schedule: 30s, 10m, 2h, 1d, 1h30m
-  mokkan ack <id-prefix>... | all acknowledge shown reminders
+  mokkan ack <id-prefix>... | all acknowledge shown reminders (they stay on the list)
+  mokkan done <id-prefix>...      finish reminders anywhere on the list (like pop, by id)
+  mokkan undone <id-prefix>...    reopen finished reminders at their old position
   mokkan edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text...]
                                   change text and/or time of a reminder in one call; n = number in
                                   mokkan list (mokkan list --all with --all), or an id prefix
@@ -344,7 +346,8 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
     switch (command) {
       case undefined:
       case 'list': return await listCommand(ctx);
-      case 'done': return await doneCommand(ctx);
+      case 'done': return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
+      case 'undone': return await markDoneCommand(ctx, args, false);
       case 'pending': return await pendingCommand(ctx);
       case 'ui': {
         const stop = new AbortController();
