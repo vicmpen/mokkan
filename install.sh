@@ -10,7 +10,7 @@ if [ "${MOKKAN_INSTALL_SKIP_BUILD:-}" != "1" ]; then
   npm ci --no-audit --no-fund
   npm run build
 fi
-chmod +x "$HERE/claude-plugin/hooks/session-start.sh" "$HERE/claude-plugin/hooks/stop.sh" "$HERE/claude-plugin/scripts/mokkan.mjs"
+chmod +x "$HERE/claude-plugin/scripts/mokkan.mjs"
 if [ -f "$HERE/dist/cli.js" ]; then chmod +x "$HERE/dist/cli.js"; fi
 
 # link_ours <target> <source>: create the symlink, or refresh it if it already points into this checkout.
@@ -46,8 +46,8 @@ fi
 mkdir -p "$HOME/.codex/skills"
 link_ours "$HOME/.codex/skills/mokkan" "$HERE/codex"
 
-# The plugin's skill is namespaced (/mokkan:mokkan) and runs its own bundle. A user-level command that runs `mokkan` from
-# PATH gives the short /mokkan.
+# A user-level /mokkan that runs `mokkan` from PATH, for sessions without the plugin. Where the plugin is loaded, its mod
+# answers /mokkan itself (toggling the pane, or running the command), and the skill stays /mokkan:mokkan.
 mkdir -p "$HOME/.claude/commands"
 link_ours "$HOME/.claude/commands/mokkan.md" "$HERE/claude-command/mokkan.md"
 
@@ -56,7 +56,7 @@ cat <<MSG
 Claude Code plugin (hooks):
   one session:   claude --plugin-dir "$HERE/claude-plugin"
   every session: export CLAUDE_CODE_PLUGIN_DIRS="$HERE/claude-plugin"   (add to your shell profile)
-Slash command: /mokkan is available in every session via ~/.claude/commands/mokkan.md (the plugin's skill is /mokkan:mokkan).
+Slash command: /mokkan is available in every session via ~/.claude/commands/mokkan.md; with the plugin loaded, /mokkan alone toggles the pane (the plugin's skill is /mokkan:mokkan).
 
 Next: start the server (see the mokkan-server repo README), then run:  mokkan register you@example.com
 MSG

@@ -430,6 +430,19 @@ describe('mokkan CLI', () => {
     expect(res.stdout).toBe('Heartbeat sent (codex); session active until 2026-09-28T12:05:00.000Z.\n');
   });
 
+  it('deliver marks the given reminders shown', async () => {
+    server.on('POST', '/reminders/deliver', () => ({ status: 200, body: { version: 3, delivered: [r1.id] } }));
+    const res = await h.run(['deliver', r1.id], { serverUrl: server.url, loggedIn: true });
+    expect(server.last('POST', '/reminders/deliver')?.body).toEqual({ ids: [r1.id] });
+    expect(res.stdout).toBe('Delivered 1 reminder(s).\n');
+  });
+
+  it('deliver without ids is a usage error', async () => {
+    const res = await h.run(['deliver'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain('Usage: mokkan deliver <id>...');
+  });
+
   it('unreachable server exits 2', async () => {
     const res = await h.run(['list'], { serverUrl: 'http://127.0.0.1:1', loggedIn: true });
     expect(res.code).toBe(2);

@@ -73,6 +73,14 @@ export async function ackCommand(ctx: Ctx, args: string[]): Promise<number> {
   return 0;
 }
 
+/** `mokkan deliver <id>...` marks reminders shown in a session: the pane, as it toasts them. Full ids only. */
+export async function deliverCommand(ctx: Ctx, args: string[]): Promise<number> {
+  if (args.length === 0) throw new UserError('Usage: mokkan deliver <id>...');
+  const { delivered } = await ctx.client.deliver(args);
+  ctx.io.stdout(ctx.json ? `${JSON.stringify({ delivered })}\n` : `Delivered ${delivered.length} reminder(s).\n`);
+  return 0;
+}
+
 /**
  * `mokkan done <id-prefix>...` finishes reminders one by one (as pop does, but anywhere on the list);
  * `mokkan undone <id-prefix>...` reopens finished ones at their old position. Prefixes resolve against the open

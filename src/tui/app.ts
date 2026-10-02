@@ -9,8 +9,8 @@ import type { CheckoutResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';
 import {
-  initialState, rowsOf, emptyLogin, ACTIVE_STATES, CHROME_ROWS, MAX_INPUT_CODE_POINTS,
-  type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tone, type TuiState,
+  initialState, rowsOf, emptyLogin, inTab, nextTab, tabLabel, ACTIVE_STATES, CHROME_ROWS, MAX_INPUT_CODE_POINTS,
+  type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tab, type Tone, type TuiState,
 } from './state.js';
 
 export const REFRESH_INTERVAL_MS = 10_000;
@@ -31,6 +31,9 @@ export function errorText(err: unknown): string {
 
 /** The server refused a change made against an older list version. */
 const isStale = (err: unknown): boolean => err instanceof ApiError && err.status === 409 && err.code === 'stale';
+
+/** A reminder whose time has come and that nobody has acked yet. */
+const isDue = (r: Reminder, now: Date): boolean => r.due_at !== null && r.state !== 'acknowledged' && Date.parse(r.due_at) <= now.getTime();
 
 /**
  * Applies an editing key to a one-line buffer (cursor in code points). Returns false for keys it does not handle.
@@ -78,6 +81,8 @@ export class TuiApp {
   private pendingRefresh: Promise<void> | null = null;
   /** Ids already sent to /reminders/deliver, so a slow server never gets them twice. */
   private readonly delivered = new Set<string>();
+  /** True until the first list picks the tab, unless a key picked one first; again after a lost session. */
+  private landing = true;
   private readonly client: MokkanClient;
   private readonly now: () => Date;
   private readonly openUrl: ((url: string) => boolean) | undefined;
@@ -238,11 +243,12 @@ export class TuiApp {
 
   private switchView(): Promise<void> {
     const s = this.state;
-    s.tab = s.tab === 'stack' ? 'done' : 'stack';
+    s.tab = nextTab(s.tab);
     s.selected = 0;
     s.scroll = 0;
+    this.landing = false;
     this.changed();
-    if (s.tab !== 'done' || s.done !== null) return Promise.resolve();
+    if (s.tab !== 'archived' || s.done !== null) return Promise.resolve();
     return this.enqueue(async () => {
       s.done = (await this.client.list('done')).reminders;
       this.clampSelection();
@@ -255,12 +261,12 @@ export class TuiApp {
   }
 
   /**
-   * The selected reminder for e, t, k (and, with `inDone`, a); sets the message and returns null when there is none
-   * to change.
+   * The selected reminder for e, w, a (and, with `inArchived`, d and Enter); sets the message and returns null when
+   * there is none to change.
    */
-  private selectedReminder(inDone = false): Reminder | null {
+  private selectedReminder(inArchived = false): Reminder | null {
     const s = this.state;
-    if (s.tab === 'done' && !inDone) { this.say('Press v for the stack to change reminders.', 'yellow'); return null; }
+    if (s.tab === 'archived' && !inArchived) { this.say('Archived ones cannot be changed; d reopens one.', 'yellow'); return null; }
     const r = this.rows()[s.selected];
     if (!r) { this.say('Nothing selected.', 'yellow'); return null; }
     return r;
@@ -290,7 +296,7 @@ export class TuiApp {
       case 'push':
         return this.action(async () => {
           const res = await this.client.push(text);
-          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}${this.landsIn('todos')}`, 'green');
         });
       case 'in': {
         const space = text.search(/\s/);
@@ -304,7 +310,7 @@ export class TuiApp {
         if (!Number.isFinite(dueAt.getTime())) { this.say('duration is too large', 'red'); return Promise.resolve(); }
         return this.action(async () => {
           const res = await this.client.push(rest, dueAt);
-          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})`, 'green');
+          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})${this.landsIn('reminders')}`, 'green');
         });
       }
       case 'edit':
@@ -326,10 +332,15 @@ export class TuiApp {
           const res = await this.client.editReminder(mode.targetId!, { due_at: dueAt }, mode.version ?? undefined);
           const r = res.reminder;
           const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : '(time cleared)';
-          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, 'green');
+          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}${this.landsIn(r.due_at === null ? 'todos' : 'reminders')}`, 'green');
         }, mode);
       }
     }
+  }
+
+  /** The view stays put: a reminder that lands on another tab says which, ` → Reminders`. */
+  private landsIn(tab: Tab): string {
+    return tab === this.state.tab ? '' : ` → ${tabLabel(tab)}`;
   }
 
   /** `parseDuration`, with its error shown in the message line (the input stays open). */
@@ -387,27 +398,27 @@ export class TuiApp {
     });
   }
 
-  /** Enter: asks before `a` would finish the selected reminder, or in the done view reopen it. */
+  /** Enter: asks before `d` would archive the selected reminder, or in the archived view reopen it. */
   private confirmDone(): Promise<void> {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
     this.state.message = null;
-    this.state.mode = { kind: 'confirm', action: this.state.tab === 'done' ? 'undone' : 'done', text: r.text, version: this.state.version, targetId: r.id };
+    this.state.mode = { kind: 'confirm', action: this.state.tab === 'archived' ? 'undone' : 'done', text: r.text, version: this.state.version, targetId: r.id };
     this.changed();
     return Promise.resolve();
   }
 
-  /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
+  /** `d`: archives the selected reminder, or in the archived view reopens it, as `mokkan done` / `mokkan undone` do. */
   private toggleDone(): Promise<void> {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
-    return this.setDone(r.id, this.state.tab !== 'done', this.state.version ?? undefined);
+    return this.setDone(r.id, this.state.tab !== 'archived', this.state.version ?? undefined);
   }
 
   private setDone(id: string, done: boolean, version: number | undefined): Promise<void> {
     return this.action(async () => {
       const res = await this.client.setDone(id, done, version);
-      this.say(`${done ? 'Done' : 'Reopened'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+      this.say(`${done ? 'Archived' : 'Reopened'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
     });
   }
 
@@ -489,8 +500,13 @@ export class TuiApp {
         this.client.list('all'),
         this.client.me().catch(() => null),
         this.client.heartbeat('ui').catch(() => null),
-        s.tab === 'done' || s.done !== null ? this.client.list('done') : null,
+        s.tab === 'archived' || s.done !== null ? this.client.list('done') : null,
       ]);
+      // The first list picks the tab: Reminders while one is due, else TODOs.
+      if (this.landing) {
+        this.landing = false;
+        s.tab = first.reminders.some((r) => isDue(r, this.now())) ? 'reminders' : 'todos';
+      }
       // Delivery changes the list and its version, and another session may have changed it since: list again.
       const list = await this.deliverDue(first.reminders) ? await this.client.list('all') : first;
       // No await from here to the selection restore, so keys pressed while the requests ran are kept.
@@ -516,12 +532,11 @@ export class TuiApp {
   }
 
   /**
-   * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
-   * `mokkan watch` do. Not in the done view, which does not show them. Returns whether the server took the call.
+   * Reminders shown here count as shown: the due ones the current tab lists are marked delivered, like the hooks and
+   * `mokkan watch` do. None in the archived view, which shows no open ones. Returns whether the server took the call.
    */
   private async deliverDue(reminders: Reminder[]): Promise<boolean> {
-    if (this.state.tab === 'done') return false;
-    const ids = reminders.filter((r) => r.state === 'due' && !this.delivered.has(r.id)).map((r) => r.id);
+    const ids = reminders.filter((r) => inTab(r, this.state.tab) && r.state === 'due' && !this.delivered.has(r.id)).map((r) => r.id);
     if (ids.length === 0) return false;
     for (const id of ids) this.delivered.add(id);
     try {
@@ -548,6 +563,7 @@ export class TuiApp {
     s.email = ''; s.credits = null; s.fetchedAt = null; s.error = null; s.message = null;
     s.mode = { kind: 'normal' };
     this.delivered.clear();
+    this.landing = true;
     this.changed();
   }
 

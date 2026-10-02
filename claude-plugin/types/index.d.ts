@@ -22,8 +22,8 @@ export type MokkanView = {
   fetchedAt: number | null
 }
 
-/** The list shown: every open reminder, or the finished ones. */
-export type MokkanTab = 'stack' | 'done'
+/** The list shown: the open todos (no due time), the open reminders (a due time), or the finished ones. */
+export type MokkanTab = 'todos' | 'reminders' | 'archived'
 
 /** The last result, drawn on the status line until 15 s pass or the next key: green, yellow for a nudge, red for an error; `id` counts the messages said. */
 export type MokkanMessage = { text: string; tone: 'ok' | 'note' | 'error'; id: number } | null

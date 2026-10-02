@@ -1,5 +1,5 @@
 ---
-description: Cross-session reminders — list, push, pop, dequeue, schedule (in), edit, ack, pending, done, status, balance, buy, register, login, logout. Never pass --force, logout or buy unless the user typed them.
+description: Cross-session reminders — push, in, edit, ack, done, list, balance… With the mokkan plugin, /mokkan alone toggles the pane. Never pass --force, logout or buy unless the user typed them.
 argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | done [<id>...] | undone <id>... | pending | status | balance | buy | register <email> | login <email> | logout]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
 allowed-tools: Bash(mokkan:*)
 ---

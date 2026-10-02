@@ -704,6 +704,14 @@ async function ackCommand(ctx, args) {
 `);
   return 0;
 }
+async function deliverCommand(ctx, args) {
+  if (args.length === 0) throw new UserError("Usage: mokkan deliver <id>...");
+  const { delivered } = await ctx.client.deliver(args);
+  ctx.io.stdout(ctx.json ? `${JSON.stringify({ delivered })}
+` : `Delivered ${delivered.length} reminder(s).
+`);
+  return 0;
+}
 async function markDoneCommand(ctx, args, done) {
   const verb = done ? "done" : "undone";
   if (args.length === 0) throw new UserError(`Usage: mokkan ${verb} <id-prefix>...`);
@@ -955,6 +963,9 @@ function formatAge(ms) {
 }
 
 // src/tui/state.ts
+var TABS = [["todos", "TODOs"], ["reminders", "Reminders"], ["archived", "Archived"]];
+var tabLabel = (tab) => TABS.find(([t]) => t === tab)[1];
+var nextTab = (tab) => TABS[(TABS.findIndex(([t]) => t === tab) + 1) % TABS.length][0];
 var CHROME_ROWS = 7;
 var MAX_INPUT_CODE_POINTS = 2e3;
 var ACTIVE_STATES = /* @__PURE__ */ new Set(["due", "delivered", "acknowledged"]);
@@ -965,7 +976,7 @@ function initialState(email, host) {
   return {
     screen: email === null ? "login" : "dashboard",
     login: emptyLogin(),
-    tab: "stack",
+    tab: "todos",
     reminders: [],
     done: null,
     version: null,
@@ -981,8 +992,9 @@ function initialState(email, host) {
     mode: { kind: "normal" }
   };
 }
+var inTab = (r, tab) => tab !== "archived" && r.due_at === null === (tab === "todos");
 function rowsOf(state) {
-  return state.tab === "done" ? state.done ?? [] : state.reminders;
+  return state.tab === "archived" ? state.done ?? [] : state.reminders.filter((r) => inTab(r, state.tab));
 }
 
 // src/tui/text.ts
@@ -1172,7 +1184,7 @@ function dashboardLines(state, size, now) {
   const items = rowsOf(state);
   const list = [];
   if (items.length === 0) {
-    const empty = state.tab === "done" ? ["Nothing finished yet.", "d marks a stack row done."] : ["Nothing on the stack. t adds a todo, r a reminder."];
+    const empty = state.tab === "archived" ? ["Nothing archived yet. d archives the selected row."] : state.tab === "todos" ? ["No todos. t adds one."] : ["No reminders. r schedules one."];
     for (const text of empty) list.push(line([part(` ${text}`, "dim")], [], columns));
   } else {
     const numberWidth = String(items.length).length;
@@ -1211,11 +1223,11 @@ function status(state, now, maxWidth) {
   return part(age ?? "loading\u2026", "dim");
 }
 function tabs(state, columns) {
-  const labels = [["stack", `Stack ${state.reminders.length}`], ["done", state.done ? `Done ${state.done.length}` : "Done"]];
   const parts = [part(" ")];
-  labels.forEach(([tab, label], i) => {
+  TABS.forEach(([tab, label], i) => {
+    const count = tab === "archived" ? state.done?.length : state.reminders.filter((r) => inTab(r, tab)).length;
     if (i > 0) parts.push(part(" \u2502 ", "dim"));
-    parts.push(part(label, tab === state.tab ? "bold" : "dim"));
+    parts.push(part(count === void 0 ? label : `${label} ${count}`, tab === state.tab ? "bold" : "dim"));
   });
   return line(parts, [], columns);
 }
@@ -1256,7 +1268,7 @@ function row(r, index, numberWidth, selected, columns, now) {
 function detail(r, now) {
   const ago = (at) => `${formatAge(now.getTime() - Date.parse(at))} ago`;
   const added = `added ${ago(r.created_at)}`;
-  if (r.state === "done") return r.done_at ? `done ${ago(r.done_at)} \xB7 ${added}` : `done \xB7 ${added}`;
+  if (r.state === "done") return r.done_at ? `archived ${ago(r.done_at)} \xB7 ${added}` : `archived \xB7 ${added}`;
   const parts = [isTodo(r) ? "todo" : "reminder", added];
   if (r.delivered_at) parts.push(`shown ${ago(r.delivered_at)}`);
   if (r.acknowledged_at) parts.push(`acked ${ago(r.acknowledged_at)}`);
@@ -1270,14 +1282,14 @@ function footer(state, columns) {
     return [line([part(label, "bold"), part(text)], [], columns), line([part(` ${m.hint}`, "dim")], [], columns)];
   }
   if (m.kind === "confirm") {
-    const [before, after, yes] = m.action === "done" ? ["mark ", " done", "done"] : m.action === "undone" ? ["reopen ", "", "reopen"] : ["pop ", "", "pop"];
+    const [before, after, yes] = m.action === "done" ? ["archive ", "", "archive"] : m.action === "undone" ? ["reopen ", "", "reopen"] : ["pop ", "", "pop"];
     const room = columns - displayWidth(` ${before}""${after}?  y: ${yes}  n: keep`);
     return [line([part(` ${before}"${fit(clean(m.text), room)}"${after}?  y: ${yes}  n: keep`, "yellow")], [], columns), ""];
   }
-  const inDone = state.tab === "done";
+  const archived = state.tab === "archived";
   return [
-    line([part(` t todo \xB7 r reminder \xB7 e edit \xB7 w when \xB7 d ${inDone ? "reopen" : "done"} \xB7 a ack \xB7 v ${inDone ? "view stack" : "view done"} \xB7 q quit`, "dim")], [], columns),
-    line([part(" p pop top \xB7 o pop oldest \xB7 A ack all \xB7 s sync \xB7 b buy \xB7 \u2191\u2193 1-9 move", "dim")], [], columns)
+    line([part(` t todo \xB7 r reminder \xB7 e edit \xB7 w when \xB7 d ${archived ? "reopen" : "archive"} \xB7 a ack \xB7 v view ${tabLabel(nextTab(state.tab)).toLowerCase()}`, "dim")], [], columns),
+    line([part(" p pop top \xB7 o pop oldest \xB7 A ack all \xB7 s sync \xB7 b buy \xB7 \u2191\u2193 1-9 move \xB7 q quit", "dim")], [], columns)
   ];
 }
 function loginLines(state, size) {
@@ -1308,6 +1320,7 @@ function errorText(err) {
   return err instanceof Error ? err.message : String(err);
 }
 var isStale = (err) => err instanceof ApiError && err.status === 409 && err.code === "stale";
+var isDue = (r, now) => r.due_at !== null && r.state !== "acknowledged" && Date.parse(r.due_at) <= now.getTime();
 function editLine(line2, key) {
   const chars = [...line2.buffer];
   const room = Math.max(0, MAX_INPUT_CODE_POINTS - chars.length);
@@ -1371,6 +1384,8 @@ var TuiApp = class {
   pendingRefresh = null;
   /** Ids already sent to /reminders/deliver, so a slow server never gets them twice. */
   delivered = /* @__PURE__ */ new Set();
+  /** True until the first list picks the tab, unless a key picked one first; again after a lost session. */
+  landing = true;
   client;
   now;
   openUrl;
@@ -1524,11 +1539,12 @@ var TuiApp = class {
   }
   switchView() {
     const s = this.state;
-    s.tab = s.tab === "stack" ? "done" : "stack";
+    s.tab = nextTab(s.tab);
     s.selected = 0;
     s.scroll = 0;
+    this.landing = false;
     this.changed();
-    if (s.tab !== "done" || s.done !== null) return Promise.resolve();
+    if (s.tab !== "archived" || s.done !== null) return Promise.resolve();
     return this.enqueue(async () => {
       s.done = (await this.client.list("done")).reminders;
       this.clampSelection();
@@ -1539,13 +1555,13 @@ var TuiApp = class {
     return this.state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
   }
   /**
-   * The selected reminder for e, t, k (and, with `inDone`, a); sets the message and returns null when there is none
-   * to change.
+   * The selected reminder for e, w, a (and, with `inArchived`, d and Enter); sets the message and returns null when
+   * there is none to change.
    */
-  selectedReminder(inDone = false) {
+  selectedReminder(inArchived = false) {
     const s = this.state;
-    if (s.tab === "done" && !inDone) {
-      this.say("Press v for the stack to change reminders.", "yellow");
+    if (s.tab === "archived" && !inArchived) {
+      this.say("Archived ones cannot be changed; d reopens one.", "yellow");
       return null;
     }
     const r = this.rows()[s.selected];
@@ -1585,7 +1601,7 @@ var TuiApp = class {
       case "push":
         return this.action(async () => {
           const res = await this.client.push(text);
-          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}${this.landsIn("todos")}`, "green");
         });
       case "in": {
         const space = text.search(/\s/);
@@ -1605,7 +1621,7 @@ var TuiApp = class {
         }
         return this.action(async () => {
           const res = await this.client.push(rest, dueAt);
-          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})`, "green");
+          this.say(`Scheduled [${shortId(res.reminder.id)}] "${res.reminder.text}" for ${dueAt.toISOString()} (${formatRelative(dueAt, now)})${this.landsIn("reminders")}`, "green");
         });
       }
       case "edit":
@@ -1634,10 +1650,14 @@ var TuiApp = class {
           const res = await this.client.editReminder(mode.targetId, { due_at: dueAt }, mode.version ?? void 0);
           const r = res.reminder;
           const when = r.due_at ? `(due ${r.due_at}, ${formatRelative(new Date(r.due_at), now)})` : "(time cleared)";
-          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}`, "green");
+          this.say(`Edited [${shortId(r.id)}] ${r.text} ${when}${this.landsIn(r.due_at === null ? "todos" : "reminders")}`, "green");
         }, mode);
       }
     }
+  }
+  /** The view stays put: a reminder that lands on another tab says which, ` → Reminders`. */
+  landsIn(tab) {
+    return tab === this.state.tab ? "" : ` \u2192 ${tabLabel(tab)}`;
   }
   /** `parseDuration`, with its error shown in the message line (the input stays open). */
   parseDurationOrSay(word) {
@@ -1696,25 +1716,25 @@ var TuiApp = class {
       this.say(`Popped [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
     });
   }
-  /** Enter: asks before `a` would finish the selected reminder, or in the done view reopen it. */
+  /** Enter: asks before `d` would archive the selected reminder, or in the archived view reopen it. */
   confirmDone() {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
     this.state.message = null;
-    this.state.mode = { kind: "confirm", action: this.state.tab === "done" ? "undone" : "done", text: r.text, version: this.state.version, targetId: r.id };
+    this.state.mode = { kind: "confirm", action: this.state.tab === "archived" ? "undone" : "done", text: r.text, version: this.state.version, targetId: r.id };
     this.changed();
     return Promise.resolve();
   }
-  /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
+  /** `d`: archives the selected reminder, or in the archived view reopens it, as `mokkan done` / `mokkan undone` do. */
   toggleDone() {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
-    return this.setDone(r.id, this.state.tab !== "done", this.state.version ?? void 0);
+    return this.setDone(r.id, this.state.tab !== "archived", this.state.version ?? void 0);
   }
   setDone(id, done, version) {
     return this.action(async () => {
       const res = await this.client.setDone(id, done, version);
-      this.say(`${done ? "Done" : "Reopened"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+      this.say(`${done ? "Archived" : "Reopened"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
     });
   }
   ackSelected() {
@@ -1795,8 +1815,12 @@ var TuiApp = class {
         this.client.list("all"),
         this.client.me().catch(() => null),
         this.client.heartbeat("ui").catch(() => null),
-        s.tab === "done" || s.done !== null ? this.client.list("done") : null
+        s.tab === "archived" || s.done !== null ? this.client.list("done") : null
       ]);
+      if (this.landing) {
+        this.landing = false;
+        s.tab = first.reminders.some((r) => isDue(r, this.now())) ? "reminders" : "todos";
+      }
       const list = await this.deliverDue(first.reminders) ? await this.client.list("all") : first;
       const keep = this.rows()[s.selected]?.id;
       s.reminders = list.reminders;
@@ -1820,12 +1844,11 @@ var TuiApp = class {
     }
   }
   /**
-   * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
-   * `mokkan watch` do. Not in the done view, which does not show them. Returns whether the server took the call.
+   * Reminders shown here count as shown: the due ones the current tab lists are marked delivered, like the hooks and
+   * `mokkan watch` do. None in the archived view, which shows no open ones. Returns whether the server took the call.
    */
   async deliverDue(reminders) {
-    if (this.state.tab === "done") return false;
-    const ids = reminders.filter((r) => r.state === "due" && !this.delivered.has(r.id)).map((r) => r.id);
+    const ids = reminders.filter((r) => inTab(r, this.state.tab) && r.state === "due" && !this.delivered.has(r.id)).map((r) => r.id);
     if (ids.length === 0) return false;
     for (const id of ids) this.delivered.add(id);
     try {
@@ -1858,6 +1881,7 @@ var TuiApp = class {
     s.message = null;
     s.mode = { kind: "normal" };
     this.delivered.clear();
+    this.landing = true;
     this.changed();
   }
   /** Maps a failed server call to the message line; only a lost session changes the screen. */
@@ -2470,6 +2494,7 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
   mokkan heartbeat [--source X]   tell the server a session is active
+  mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
   mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
@@ -2644,6 +2669,8 @@ Logged out.
         return await inCommand(ctx, args);
       case "ack":
         return await ackCommand(ctx, args);
+      case "deliver":
+        return await deliverCommand(ctx, args);
       case "edit":
         return await editCommand(ctx, args);
       case "register":

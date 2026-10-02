@@ -1,7 +1,7 @@
 {
   "name": "mokkan",
   "version": "0.5.0",
-  "description": "Cross-session reminders: /mokkan:mokkan push|pop|dequeue|in|edit|ack|done|undone|list and credits, a live pane (/mokkan-pane) with the stack, and hooks that show due reminders when a session starts and after each turn.",
+  "description": "Cross-session reminders: /mokkan toggles a live pane with your TODOs, Reminders and Archived tabs, /mokkan <command> runs push, in, edit, ack, done and the rest at once, and the /mokkan:mokkan skill lets Claude do it for you.",
   "author": {
     "name": "Victor Benetatos"
   },

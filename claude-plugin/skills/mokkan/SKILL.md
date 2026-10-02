@@ -1,6 +1,6 @@
 ---
 name: mokkan
-description: Cross-session reminders (mokkan) — list, push, pop, dequeue, schedule (in), edit, ack, pending, done, status, balance, buy, register, login, logout. Use when the user asks to remember something for later, to add, list, change, schedule or acknowledge a reminder, or about their mokkan credits; pass the mokkan command and its arguments. Never pass --force, logout or buy unless the user typed them.
+description: Ask Claude to run a mokkan command (push, in, edit, ack, done, list, balance…) and relay the output. For the pane or an instant command, type /mokkan instead. Use when the user asks to remember something for later, to add, list, change, schedule, acknowledge or archive a todo or reminder, or about their mokkan credits; pass the mokkan command and its arguments. Never pass --force, logout or buy unless the user typed them.
 argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | done [<id>...] | undone <id>... | pending | status | balance | buy | register <email> | login <email> | logout]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" *)
 ---
@@ -16,5 +16,5 @@ Reminders run on prepaid credits: €5 buys 500 credits, and every new account s
 
 This section is for advising the user; it does not allow you to run anything beyond the command above.
 
-- To change a reminder, suggest `/mokkan:mokkan edit <n|id> [--in 2h | --at <iso> | --clear-due] [new text]`, never `pop` followed by `push`. The new text is the words after the options, without quotes: `/mokkan:mokkan edit 2 --in 2h call mom at 5`. `n` is the number in `/mokkan:mokkan list`; add `--all` to use the numbering of `/mokkan:mokkan list --all` (scheduled reminders), or use the id in square brackets. Put every change to one reminder into a single `edit` call, because each call counts as an edit.
+- To change a reminder, suggest `/mokkan edit <n|id> [--in 2h | --at <iso> | --clear-due] [new text]`, never `pop` followed by `push`. The new text is the words after the options, without quotes: `/mokkan edit 2 --in 2h call mom at 5`. `n` is the number in `/mokkan list`; add `--all` to use the numbering of `/mokkan list --all` (scheduled reminders), or use the id in square brackets. Put every change to one reminder into a single `edit` call, because each call counts as an edit.
 - If the output above says "Not enough credits" or mentions `mokkan buy`, tell the user to run `mokkan buy` (or `npx @vicmpen/mokkan-cli buy`) in a terminal to add credits. Do not retry the command and do not run `mokkan buy` yourself.

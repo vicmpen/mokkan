@@ -7,14 +7,13 @@
 /plugin install mokkan@mokkan
 ```
 
-Then `/mokkan-pane` opens the pane. New to mods? Read [Getting started with Claude Code mods](https://claude.dev/blog/getting-started-with-claude-code-mods/).
+Then `/mokkan` opens the pane, and closes it again; `/mokkan push call the bank` runs a command straight away. New to mods? Read [Getting started with Claude Code mods](https://claude.dev/blog/getting-started-with-claude-code-mods/).
 
 ## One push. Every session.
 
-The server (`https://api.mokkan.dev`) keeps the only copy of your list. Each session asks it what's due through hooks, not the model remembering to check, so a note pushed on your laptop shows up on your desktop within a turn or two:
+The server (`https://api.mokkan.dev`) keeps the only copy of your list. Each session asks it what's due, not the model remembering to check, so a note pushed on your laptop shows up on your desktop within seconds:
 
-- **The pane** lists it on its next refresh, and a scheduled reminder that comes due while it's open arrives as a toast.
-- **Claude Code** shows it when a session starts (SessionStart hook) and after Claude's next reply (Stop hook).
+- **The pane** (`/mokkan`) in Claude Code lists it on its next refresh, every 15 seconds while it's open, and a scheduled reminder that comes due while it's open arrives as a toast. Nothing is injected into the conversation.
 - **Codex** checks at the start and end of every task, through the mokkan skill.
 - **Any terminal** has the same list: `mokkan` prints it, `mokkan ui` opens it full-screen.
 
@@ -29,20 +28,32 @@ Acknowledge once, from any session, and every session knows. A pop is a single a
 
 ## Nothing closes until you say so.
 
-Showing a reminder doesn't mean you saw it. mokkan keeps it lit until you acknowledge it, and a scheduled reminder that nobody acknowledges, or that comes due while no session is open, is emailed to you. If it has to choose, it would rather tell you twice than not at all.
+Showing a reminder doesn't mean you saw it. mokkan keeps it lit until you acknowledge it, and a scheduled reminder that nobody acknowledges, or that comes due while no pane is open, is emailed to you. Todos (no due time) are never toasted or emailed.
 
 | State | What it means |
 |---|---|
 | scheduled | `mokkan in 1h30m …` waits on the server, off the list, until its time comes. |
-| due | On the list and unseen. The next hook in any session picks it up. With no session open, it goes out by email. |
-| delivered | Shown in a session. It keeps asking for an ack, and if one doesn't come, the email goes out anyway. |
+| due | On the list and unseen. An open pane shows it as a toast within 15 seconds. With no pane open, it goes out by email. |
+| delivered | Shown as a toast in the pane. If no ack comes, the email goes out anyway. |
 | acknowledged | You've seen it. It stays on the stack until you pop, dequeue or finish it. |
+
+### When is a reminder emailed?
+
+Only a reminder with a due time is ever emailed, and at most once. An open pane tells the server that a session is active each time it refreshes.
+
+| When it comes due | What happens |
+|---|---|
+| A pane is open | The pane shows it as a toast within 15 seconds. If you haven't acknowledged it 3 minutes after the toast, it is emailed. |
+| No pane has been open in the last 5 minutes | The server waits 5 minutes after the due time. If a pane opens in that window, it shows the toast and the case above applies. Otherwise it is emailed 5 minutes after the due time. |
+| You acknowledge it first (pane `a`, `mokkan ack`, Codex) | No email, and the credit held for it is given back. |
+
+The timings are the server's defaults. If you run your own server, they are `ACK_GRACE_SECONDS` (180), `HEARTBEAT_ACTIVE_SECONDS` (300) and `NO_SESSION_EMAIL_DELAY_SECONDS` (300). Codex and the terminal (`mokkan`, `mokkan ui`) read the same list; Codex checks at the start and end of each task through its skill.
 
 ## The mod: a pane in Claude Code
 
-The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan-pane` opens it. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again. While the pane has the keyboard, a key it doesn't use does nothing instead of landing in the prompt.
+The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan` opens it, and closes it when it is open. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `Esc` hands the keyboard back and `ctrl+x tab` takes it again. While the pane has the keyboard, a key it doesn't use does nothing instead of landing in the prompt.
 
-It is laid out like `mokkan ui`: the header with your credits, `Stack │ Done`, the list, the last result, the keys, and the sync state on the bottom line. The pane draws its own rounded border, pale green while it has the keyboard and grey while it doesn't. One stack and a done view. The stack holds todos (`□`, no due time) and reminders (`◷` scheduled, `●` due, `○` shown, `·` acknowledged) in stack order. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets its history underneath (`todo · added 3h ago · shown 1h ago · acked 5m ago`). `↑` `↓` and `Tab` walk the pane's buttons, and the row they land on is selected, marked with `▸` and bold; a click or a row's number selects it directly. Rows past the ninth are typed as two digits within a second (`1` then `2` is row 12), and with ten or more rows `0` joins the keys for rows 10, 20 and so on. Selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to use keys` in place of the commands:
+It is laid out like `mokkan ui`: the header with your credits, `TODOs 2 │ Reminders 3 │ Archived 4`, the list, the last result, the keys, and the sync state on the bottom line. The pane draws its own rounded border, pale green while it has the keyboard and grey while it doesn't. Three tabs, each with its own count: TODOs holds the open todos (no due time), Reminders the open reminders (a due time, scheduled ones included), both in stack order, and Archived the finished ones. The pane opens on Reminders while one is due, and on TODOs otherwise. A row's bar is cyan for a todo and magenta for a reminder; `·` marks an acknowledged one and `✓` an archived one. Rows are numbered within their tab. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets its history underneath (`todo · added 3h ago · shown 1h ago · acked 5m ago`). `↑` `↓` and `Tab` walk the pane's buttons, and the row they land on is selected, marked with `▸` and bold; a click or a row's number selects it directly. Rows past the ninth are typed as two digits within a second (`1` then `2` is row 12), and with ten or more rows `0` joins the keys for rows 10, 20 and so on. Selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to use keys` in place of the commands:
 
 | Key | Label | Action |
 |---|---|---|
@@ -50,18 +61,17 @@ It is laid out like `mokkan ui`: the header with your credits, `Stack │ Done`,
 | `r` | `reminder` | schedule a reminder: `2h call the bank`, the first word is a duration (1 credit, +1 held for the email) |
 | `e` | `edit` | edit the selected one's text (every 3rd edit costs 1 credit) |
 | `w` | `when` | set its due time (`2h`), or `clear` it to make it a todo again |
-| `d` | `done` / `reopen` | mark it done; in the done view, reopen it |
+| `d` | `archive` / `reopen` | archive it (`mokkan done`); in Archived, reopen it |
 | `a` | `ack` | acknowledge it: you've seen it, so its email stops |
-| `p` / `o` | `pop top` / `pop oldest` | finish the top / the oldest one on the stack |
-| `v` | `view done` / `view stack` | switch between the stack and done |
+| `v` | `view reminders` / `view archived` / `view todos` | go to the next tab, TODOs → Reminders → Archived; a click on a tab goes straight to it |
 | `b` | `buy` | open Stripe Checkout in your browser to add credits (not on mobile) |
 | `s` / `l` / `q` | `sync` / `log out` / `close` | sync now / log out / close the pane |
-| `h` | `help` / `back` | show what mokkan is, the glyphs, ack vs done vs pop, and the costs in place of the list; `h` again goes back |
+| `h` | `help` / `back` | show what mokkan is, the glyphs, ack vs archive, and the costs in place of the list; `h` again goes back |
 | `l` / `r` | `log in` / `register` | when logged out (the password is masked) |
 
-Pop and log out ask first, naming what they act on and what each answer does: `pop "call the bank"?`, with `y: pop · n: keep` underneath. While a command runs, other keys wait. The line above the commands shows each result with the reminder it touched (`added · call mom`, `due in 2h · call the bank`), errors start with `error:` in red and wrap so the fix at their end (`Run: mokkan buy`) stays readable, and the line clears itself after 15 seconds. The header's balance turns yellow under 10 credits (`· 7 credits · low`) and red at 0; `b` opens Stripe Checkout to add more. When the server can't be reached the pane keeps the last list and marks it `offline · synced 12:04`, the time of the last good sync; online the bottom line reads `synced 12:04`, and while a command runs it names it (`popping…`).
+Archiving with `Enter` and logging out ask first, naming what they act on and what each answer does: `archive "call the bank"?`, with `y: archive · n: keep` underneath. While a command runs, other keys wait. The line above the commands shows each result with the reminder it touched (`added · call mom`, `due in 2h · call the bank`). The pane stays on its tab: a new or changed one that belongs on another tab says where it went (`added to TODOs · call mom`, `moved to Reminders, due in 2h · renew the cert`), errors start with `error:` in red and wrap so the fix at their end (`Run: mokkan buy`) stays readable, and the line clears itself after 15 seconds. The header's balance turns yellow under 10 credits (`· 7 credits · low`) and red at 0; `b` opens Stripe Checkout to add more. When the server can't be reached the pane keeps the last list and marks it `offline · synced 12:04`, the time of the last good sync; online the bottom line reads `synced 12:04`, and while a command runs it names it (`archiving…`).
 
-The mod runs the plugin's own copy of the CLI, refreshes every minute while it is open and after every action. Reminders with a due time that come due while the pane is open are announced with a toast. Mods are hooks and ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules` next to the shell hooks.
+The mod runs the plugin's own copy of the CLI and polls the server every 15 seconds while it is open and after every action. Each poll tells the server a session is active, and every reminder with a due time that has come due is shown as a toast and marked delivered. Todos are never toasted. Mods ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules`, and that is all it holds.
 
 ## Install
 
@@ -77,11 +87,11 @@ mokkan needs **Node.js 20.3 or later**. Choose the channel that matches the tool
 From a shell, run `claude plugin marketplace add vicmpen/mokkan`, then `claude plugin install mokkan@mokkan`.
 
 The plugin provides:
-- **`/mokkan:mokkan <command>`**, for example `/mokkan:mokkan push call the bank` or `/mokkan:mokkan list`. Claude can also invoke it when you ask it to remember something.
-- **Hooks**: reminders that are due appear when a session starts and after Claude replies.
-- **A mod**: `/mokkan-pane` opens a pane with your stack beside the transcript, with the same actions as `mokkan ui` (see below).
+- **`/mokkan`**: on its own it opens the pane (see below), and closes it when it is open. With a command it runs it and prints the output straight away, without a model turn: `/mokkan push call the bank`, `/mokkan in 2h stretch`, `/mokkan list`. `ui` and `watch` need a terminal, and `login` and `register` are done in the pane (`l`, `r`) or a terminal.
+- **`/mokkan:mokkan <command>`**: the same commands as a skill, run by Claude, which also invokes it when you ask it to remember something.
+- **A mod**: the pane, with your stack beside the transcript and the same actions as `mokkan ui` (see below).
 
-The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and hooks run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
+The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and pane run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
 
 ### Terminal (npm)
 
@@ -102,9 +112,9 @@ cp -r mokkan/codex ~/.codex/skills/mokkan
 
 The npm package contains the same files under `$(npm root -g)/mokkan/codex`. Codex has no hooks, so the skill tells Codex to check for due reminders at the start and end of each task.
 
-### A short `/mokkan` in Claude Code (optional)
+### `/mokkan` without the plugin (optional)
 
-Plugin skills are namespaced, so the plugin's command is `/mokkan:mokkan`, and this README writes it that way. If you installed the npm package, you can also get a plain `/mokkan` by copying `claude-command/mokkan.md` from the package or from this repository to `~/.claude/commands/mokkan.md`. That command runs `mokkan` from your PATH and takes the same arguments: `/mokkan list` is `/mokkan:mokkan list`.
+The plugin gives every session `/mokkan`. In sessions that don't load the plugin, the npm package can give you one too: copy `claude-command/mokkan.md` from the package or from this repository to `~/.claude/commands/mokkan.md`. That command runs `mokkan` from your PATH through Claude, with the same arguments. The two live side by side: where the plugin is loaded it answers `/mokkan` itself (the pane, or the command's output straight away), and elsewhere the user-level command runs.
 
 ## Account
 
@@ -140,7 +150,7 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 
 ## Terminal UI
 
-`mokkan ui` opens a full-screen view of your stack in the terminal: one stack of every open reminder (scheduled ones included) and a done view, your credit balance, and key hints. Todos (pushed, no due time) show `□`; reminders with a due time show `◷` scheduled, `●` due (yellow), `○` shown, `·` acknowledged, with the time on the right (`in 40m`, `17:00`, `Wed 17:00`, `12 Oct`, `overdue 40m` in red, `40m ago`). The selected row has a detail line under it (`todo · added 3h ago · shown 1h ago · acked 5m ago`). It refreshes every 10 seconds and after every action. The footer uses the pane's labels (`t todo · r reminder · … · p pop top · o pop oldest`).
+`mokkan ui` opens a full-screen view of your stack in the terminal: the same three tabs as the pane (`TODOs │ Reminders │ Archived`; Reminders includes scheduled ones, and it opens on Reminders while one is due), your credit balance, and key hints. Todos (pushed, no due time) show `□`; reminders with a due time show `◷` scheduled, `●` due (yellow), `○` shown, `·` acknowledged, with the time on the right (`in 40m`, `17:00`, `Wed 17:00`, `12 Oct`, `overdue 40m` in red, `40m ago`). The selected row has a detail line under it (`todo · added 3h ago · shown 1h ago · acked 5m ago`). It refreshes every 10 seconds and after every action. The footer uses the pane's labels (`t todo · r reminder · … · p pop top · o pop oldest`).
 
 | Key | Action |
 |---|---|
@@ -149,15 +159,15 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 | `r` | schedule a reminder: `2h call the bank`, the first word is a duration |
 | `e` | edit the selected one's text (every 3rd edit costs 1 credit) |
 | `w` | set its due time: a duration (turns a todo into a reminder), or `clear` to make it a todo again |
-| `d` | mark the selected one done; in the done view, reopen it (the footer says `reopen` there) |
+| `d` | archive the selected one (`mokkan done`); in Archived, reopen it (the footer says `reopen` there) |
 | `a` / `A` | acknowledge the selected one / all |
-| `v`, `Tab` | switch between the stack and the done view (`view done` / `view stack`) |
+| `v`, `Tab` | go to the next tab: TODOs → Reminders → Archived. `t`, `r` and `w` leave you where you are; the message says when the item went to another tab (`→ Reminders`) |
 | `p` / `o` | pop top / pop oldest (`mokkan pop` / `mokkan dequeue`), after a confirmation that names the reminder: `y: pop  n: keep` |
 | `s` | sync now |
 | `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
 | `q`, `Ctrl-C` | quit |
 
-Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
+Due ones on the tab you are looking at count as shown: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
 ## Credits and pricing
 
@@ -218,12 +228,11 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 
 - `src/` holds the `mokkan` CLI, written in TypeScript with no runtime dependencies.
 - `claude-plugin/` is the Claude Code plugin, and `.claude-plugin/marketplace.json` makes this repository its marketplace.
-  - `hooks/` has the `SessionStart` and `Stop` hooks. They run the plugin's bundle first, then a dev checkout's `dist/cli.js`, then `mokkan` from PATH.
-  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
+  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It serves `/mokkan` (registering it unless a user-level `/mokkan` already holds the name, which it then answers), and hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
   - `skills/mokkan/SKILL.md` is `/mokkan:mokkan`. It runs `node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs"` through `!` bash expansion (quoted, so a plugin path with spaces works; the `allowed-tools` rule carries the same quotes).
   - `scripts/mokkan.mjs` is the bundled CLI. It is committed because plugins are installed straight from git.
   - Check the plugin with `claude plugin validate .` and `claude plugin validate claude-plugin`.
-- `claude-command/mokkan.md` is the same command as a user-level `/mokkan` that runs `mokkan` from PATH. A test checks that its instructions match the plugin skill's.
+- `claude-command/mokkan.md` is the same command as a user-level `/mokkan` that runs `mokkan` from PATH, for sessions without the plugin; with the plugin loaded, the mod answers it. A test checks that its instructions match the plugin skill's.
 - `codex/SKILL.md` is the Codex skill.
 - `install.sh` sets up a dev checkout. It runs `npm ci` and the build, then links `~/.local/bin/mokkan`, `~/.codex/skills/mokkan` and `~/.claude/commands/mokkan.md`, and prints the `claude --plugin-dir` command.
   - It only creates or refreshes symlinks that point into this checkout. Any other file at those paths is left alone with a `warning: ... is not ours; skipped` line.
@@ -236,6 +245,6 @@ Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.c
 
 The slash command runs `mokkan --argline "$ARGUMENTS" --exit-zero 2>&1`. Claude Code pastes the arguments into that line as text, so they end up inside double quotes. That means `'`, `#`, `*`, `>`, `&`, `;`, `|` and parentheses pass through literally, and the CLI splits the string on whitespace itself (runs of spaces become one space). Inside double quotes the shell still interprets four characters: `$`, `` ` ``, `"` and `\`. Don't use them in `/mokkan` text. For reminders that need them, use `mokkan push ...` in a terminal.
 
-`--exit-zero` makes every failure print on stdout and exit 0, because Claude Code aborts a slash command whose `!` command exits non-zero. This covers an empty `pop`, being logged out and the server being down. Hooks always exit 0, so they can never block a session.
+`--exit-zero` makes every failure print on stdout and exit 0, because Claude Code aborts a slash command whose `!` command exits non-zero. This covers an empty `pop`, being logged out and the server being down.
 
 For a local dev server, set `MOKKAN_SERVER_URL=http://127.0.0.1:8787`.

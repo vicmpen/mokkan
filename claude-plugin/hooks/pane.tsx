@@ -5,14 +5,14 @@ import type { MokkanMessage, MokkanMode, MokkanReminder, MokkanTab, MokkanView }
 
 const PANE = 'mokkan'
 const COLUMNS = 44
-const REFRESH_MS = 60_000
+const REFRESH_MS = 15_000
 const MESSAGE_MS = 15_000
 const EMPTY: MokkanView = { reminders: [], done: [], balance: null, failure: null, fetchedAt: null }
 const NORMAL: MokkanMode = { kind: 'normal' }
 const view = atom({ plugin: 'mokkan', key: 'view' } as const, EMPTY)
 const mode = atom({ plugin: 'mokkan', key: 'mode' } as const, NORMAL)
 const selected = atom({ plugin: 'mokkan', key: 'selected' } as const, null as string | null)
-const tab = atom({ plugin: 'mokkan', key: 'tab' } as const, 'stack' as MokkanTab)
+const tab = atom({ plugin: 'mokkan', key: 'tab' } as const, 'todos' as MokkanTab)
 const message = atom({ plugin: 'mokkan', key: 'message' } as const, null as MokkanMessage)
 const busy = atom({ plugin: 'mokkan', key: 'busy' } as const, null as string | null)
 const syncing = atom({ plugin: 'mokkan', key: 'syncing' } as const, false)
@@ -22,6 +22,16 @@ const ACTIVE = new Set<MokkanReminder['state']>(['due', 'delivered', 'acknowledg
 /** Pale green: the pane's own border while it holds the keys (the engine's frame takes no colour from a plugin). */
 const FOCUS_BORDER = '#a8d8a8'
 const DURATION = /^(?=\d)(?:\d+d)?(?:\d+h)?(?:\d+m)?(?:\d+s)?$/
+/** The tabs in `v` order, with their labels. */
+const TABS: [MokkanTab, string][] = [['todos', 'TODOs'], ['reminders', 'Reminders'], ['archived', 'Archived']]
+const label = (t: MokkanTab) => TABS.find(([k]) => k === t)![1]
+/** The tab `v` goes to next. */
+const after = (t: MokkanTab) => TABS[(TABS.findIndex(([k]) => k === t) + 1) % TABS.length]![0]
+/** A tab's rows: a todo has no due time, a reminder has one; Archived is `mokkan done`. */
+const rowsOf = (v: MokkanView, t: MokkanTab) =>
+  t === 'archived' ? v.done : v.reminders.filter(r => (r.due_at === null) === (t === 'todos'))
+/** A reminder whose time has come and that nobody has acked yet. */
+const isDue = (r: MokkanReminder, now: number) => r.due_at !== null && r.state !== 'acknowledged' && Date.parse(r.due_at) <= now
 
 /** The newest refresh; an older one's result is dropped. */
 let seq = 0
@@ -31,6 +41,8 @@ let running = false
 let said = 0
 /** The digit just typed while rows 10+ exist, so a second one within a second makes a two-digit row: 1 then 2 is row 12. */
 let pending: { digit: number; at: number } | null = null
+/** True from the pane's opening to its first good list, which picks the tab it opens on. */
+let landing = false
 /** The CLI's argv, looked up once per load of this module (the first refresh's three calls share the lookup). */
 let resolved: Promise<string[]> | null = null
 /** Whether the pane held the keys at its last draw, and when a draw last saw it let them go: a key no Button binds leaves the pane and reaches the prompt around that redraw, just before or just after it. */
@@ -65,6 +77,24 @@ async function run($: EngineInterface, args: string[], env?: Record<string, stri
   }
 }
 
+/** `/mokkan <words>`: the CLI's own text, as the slash command shows it (`--exit-zero` puts its errors on stdout too). */
+async function runLine($: EngineInterface, line: string): Promise<string> {
+  try {
+    const { stdout } = await $.process.run([...(await cli($)), '--argline', line, '--exit-zero'], { timeoutMs: 15_000 })
+    return stdout.trim() || 'No output from mokkan.'
+  } catch (err) {
+    return `mokkan failed: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+/** Verbs that need a terminal of their own: `/mokkan` says where to run them instead. */
+const TERMINAL_ONLY: Record<string, string> = {
+  ui: 'mokkan ui is a full-screen view: run it in a terminal. Here, /mokkan alone opens the pane.',
+  watch: 'mokkan watch runs until stopped: run it in a terminal.',
+  login: 'Log in from the pane (/mokkan, then l), or run mokkan login in a terminal.',
+  register: 'Register from the pane (/mokkan, then r), or run mokkan register in a terminal.',
+}
+
 const firstLine = (out: string) => out.split('\n')[0] ?? ''
 const json = <T,>(out: string): T | null => {
   try {
@@ -83,10 +113,11 @@ async function refresh($: EngineInterface): Promise<void> {
   const mine = ++seq
   await update($, syncing, () => true)
   try {
-    const [list, done, balance] = await Promise.all([run($, ['list', '--all']), run($, ['done']), run($, ['balance'])])
+    // The heartbeat makes an open pane an active session: the server then waits for it to show what comes due.
+    const [list, done, balance] = await Promise.all([run($, ['list', '--all']), run($, ['done']), run($, ['balance']), run($, ['heartbeat', '--source', 'claude-code-pane'])])
     if (mine !== seq) return
     const before = await read($, view)
-    const next: MokkanView = list.ok
+    let next: MokkanView = list.ok
       ? {
           reminders: reminders(list.out),
           done: done.ok ? reminders(done.out) : before.done,
@@ -97,16 +128,25 @@ async function refresh($: EngineInterface): Promise<void> {
       : list.code === 1 // a user error on a bare list: not logged in, or the session expired
         ? { ...EMPTY, failure: { kind: 'loggedOut', text: firstLine(list.out) } }
         : { ...before, failure: { kind: 'offline', text: firstLine(list.out) || 'mokkan failed' } }
-    // Only a timed reminder that fired since the last look; a todo is due the moment it is pushed.
-    if (before.fetchedAt !== null) {
-      const wasDue = new Set(before.reminders.filter(r => r.state === 'due').map(r => r.id))
-      for (const r of next.reminders) {
-        if (r.due_at !== null && r.state === 'due' && !wasDue.has(r.id)) $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
-      }
+    // A timed reminder that is due has been shown nowhere: toast it and mark it delivered, so the server emails it
+    // only if it isn't acked within its grace period. A todo is due the moment it is pushed: never.
+    const fired = list.ok ? next.reminders.filter(r => r.due_at !== null && r.state === 'due') : []
+    for (const r of fired) $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
+    if (fired.length > 0 && (await run($, ['deliver', ...fired.map(r => r.id)])).ok) {
+      if (mine !== seq) return
+      const at = new Date(await $.clock.now()).toISOString()
+      next = { ...next, reminders: next.reminders.map(r => (fired.includes(r) ? { ...r, state: 'delivered', delivered_at: at } : r)) }
     }
     await update($, view, () => next)
-    const sel = await read($, selected)
-    if (sel !== null && ![...next.reminders, ...next.done].some(r => r.id === sel)) await update($, selected, () => null)
+    // It opens on Reminders while one is due, else on TODOs.
+    if (list.ok && landing) {
+      landing = false
+      const now = await $.clock.now()
+      await update($, tab, () => (next.reminders.some(r => isDue(r, now)) ? 'reminders' : 'todos'))
+    }
+    // A row that left the tab (archived, reopened, or moved by w) takes the selection with it.
+    const [sel, tb] = await Promise.all([read($, selected), read($, tab)])
+    if (sel !== null && !rowsOf(next, tb).some(r => r.id === sel)) await update($, selected, () => null)
   } finally {
     if (mine === seq) await update($, syncing, () => false)
   }
@@ -145,6 +185,7 @@ async function act($: EngineInterface, verb: string, args: string[], done: strin
 
 async function open($: EngineInterface, asked: boolean): Promise<void> {
   await $.ui.open(asked ? { id: PANE, title: 'mokkan', columns: COLUMNS, focus: true } : { id: PANE, title: 'mokkan', columns: COLUMNS })
+  landing = true
   void refresh($)
 }
 
@@ -204,17 +245,16 @@ function when(r: MokkanReminder, now: number): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`
 }
 
-/** The glyph's shape is the kind (□ a todo, the rest a reminder) and its style the state; yellow only for a fired reminder. */
-const MARK: Record<MokkanReminder['state'], [string, 'dim' | 'yellow' | '']> = {
-  scheduled: ['◷', 'dim'], due: ['●', 'yellow'], delivered: ['○', ''], acknowledged: ['·', 'dim'], done: ['✓', 'dim'],
-}
-const mark = (r: MokkanReminder): [string, 'dim' | 'yellow' | ''] =>
-  r.due_at === null && r.state !== 'done' ? ['□', r.state === 'acknowledged' ? 'dim' : ''] : MARK[r.state]
+/** The mark's color is the kind (cyan a todo, magenta a reminder); its shape `·` once acked, `✓` once done, a bar before. */
+type Kind = 'cyan' | 'magenta'
+const kind = (r: MokkanReminder): Kind => (r.due_at === null ? 'cyan' : 'magenta')
+const mark = (r: MokkanReminder): [string, boolean] =>
+  r.state === 'done' ? ['✓', true] : r.state === 'acknowledged' ? ['·', true] : ['▎', false]
 
 /** The selected row's history, `todo · added 3h ago · shown 1h ago · acked 5m ago`, in lines of `width` broken between parts. */
 function detail(r: MokkanReminder, now: number, width: number): string[] {
   const parts = r.state === 'done'
-    ? [`done${ago(r.done_at, now)}`, `added${ago(r.created_at, now)}`]
+    ? [`archived${ago(r.done_at, now)}`, `added${ago(r.created_at, now)}`]
     : [r.due_at === null ? 'todo' : 'reminder', `added${ago(r.created_at, now)}`, r.delivered_at && `shown${ago(r.delivered_at, now)}`, r.acknowledged_at && `acked${ago(r.acknowledged_at, now)}`]
   const lines: string[] = []
   for (const part of parts.filter((x): x is string => Boolean(x))) {
@@ -234,17 +274,16 @@ const FIELD: Record<Extract<MokkanMode, { kind: 'input' }>['purpose'], { label: 
 
 /** The help view (`h`): what mokkan is, the glyphs, the acts that are easy to mix up, and the costs. */
 const HELP_INTRO = 'A stack of todos and reminders that every Claude Code, Codex and terminal session shares.'
-const HELP_GLYPHS: [string, 'dim' | 'yellow' | '', string][] = [
-  ['□', '', 'todo: a note with no time'],
-  ['◷', 'dim', 'reminder, scheduled'],
-  ['●', 'yellow', 'reminder, due now'],
-  ['○', '', 'shown in a session, not acked yet'],
+const HELP_GLYPHS: [string, Kind | 'dim', string][] = [
+  ['▎', 'cyan', 'todo: a note with no time'],
+  ['▎', 'magenta', 'reminder: a note with a due time'],
   ['·', 'dim', 'acked'],
-  ['✓', 'dim', 'done'],
+  ['✓', 'dim', 'archived'],
 ]
 const HELP_TEXT = [
   'A due reminder nobody acks is emailed to you. Ack (a) says you\'ve seen it: the email stops and it stays on the stack.',
-  'Done (d) finishes the selected one, as Enter on it does after asking; pop top (p) and pop oldest (o) finish the top or the oldest without selecting. Finished ones move to Done, where d reopens them.',
+  'TODOs and Reminders each list their own kind; v cycles the tabs. w moves a row between them: a time makes it a reminder, clear makes it a todo.',
+  'Archive (d) finishes the selected one, as Enter on it does after asking. Finished ones move to Archived, where d reopens them.',
   '↑↓, Tab or a row\'s number select it: type 1 then 2 for row 12. ctrl+x tab gives the pane the keys; Esc gives them back.',
   'A todo costs 1 credit. A reminder costs 1, plus 1 held for its email and given back if you ack it first. Every 3rd edit costs 1; the rest is free.',
   'b opens Stripe Checkout to add credits. In a terminal, mokkan ui opens this full screen.',
@@ -259,7 +298,10 @@ export const register: Register = on => {
   let secret = ''
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'mokkan-pane', description: 'Open the mokkan reminders pane; `focus` takes the keys, `close` closes it', immediate: true })
+    // A user-level /mokkan (install.sh links one, for sessions without this plugin) keeps its name; the hook below answers it.
+    if (!(await $.command.list()).some(c => c.name === 'mokkan' && c.plugin !== 'mokkan')) {
+      await $.command.register({ name: 'mokkan', description: 'Toggle the mokkan pane; with a verb, run it: push, in, list, ack, done, balance…', argumentHint: '[push <text> | in <duration> <text> | list | ack <id|all> | done <id> | balance | …]', immediate: true })
+    }
     $.clock.every(REFRESH_MS, async () => {
       if ((await $.ui.panes()).some(p => p.id === PANE)) await refresh($)
     })
@@ -283,20 +325,25 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'mokkan-pane' }, async ($, e) => {
-    const arg = e.args.trim()
-    if (arg === 'close') {
+  // `/mokkan` alone toggles the pane; `/mokkan <verb> …` runs the CLI and shows its output, with no model turn.
+  on('command.run', { command: 'mokkan' }, async ($, e) => {
+    const line = e.args.trim()
+    const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
+    if (line) {
+      const verb = line.split(/\s+/)[0]!
+      if (TERMINAL_ONLY[verb]) return { text: TERMINAL_ONLY[verb] }
+      const text = await runLine($, line)
+      if (isOpen) void refresh($)
+      return { text }
+    }
+    if (isOpen) {
       await $.ui.close({ id: PANE })
       return { text: 'mokkan pane closed.' }
-    }
-    if (arg === 'focus') {
-      const placed = await $.ui.open({ id: PANE, title: 'mokkan', columns: COLUMNS, focus: true })
-      return { text: placed.isPlaced ? 'mokkan pane focused (Esc hands the keys back).' : `mokkan pane not placed: ${placed.reason}` }
     }
     await open($, true)
     const { isFullscreen, columns } = e.presentation
     const where = isFullscreen ? (columns >= 110 ? 'docked beside the transcript' : `inline: the fullscreen layout docks from 110 columns, this terminal is ${columns}`) : 'inline: the main-screen layout never docks a pane'
-    return { text: `mokkan pane opened, ${where}. Esc hands the keys back; ctrl+x tab or /mokkan-pane focus takes them again.` }
+    return { text: `mokkan pane opened, ${where}. Esc hands the keys back; ctrl+x tab takes them again. /mokkan again closes it.` }
   })
 
   // The engine's focus ring walks the pane (↑/↓, Tab, clicks); a row it lands on becomes the ▸ selection too.
@@ -340,7 +387,7 @@ export const register: Register = on => {
     const focused = e.surface !== 'terminal' || e.props.isFocused !== false
     const loggedOut = v.failure?.kind === 'loggedOut'
     const offline = v.failure?.kind === 'offline'
-    const list = tb === 'done' ? v.done : v.reminders
+    const list = rowsOf(v, tb)
     const current = list.find(r => r.id === sel)
 
     /** Every key goes through here: dropped while a CLI call runs; it clears the message said before it. */
@@ -353,7 +400,7 @@ export const register: Register = on => {
     const needOne = () => say($, 'select a row first (its number or ↑↓)', 'note')
     const cancel = () => { secret = ''; return update($, mode, () => NORMAL) }
     const switchView = async (to?: MokkanTab) => {
-      await update($, tab, was => to ?? (was === 'stack' ? 'done' : 'stack'))
+      await update($, tab, was => to ?? after(was))
       await update($, selected, () => null)
     }
     // The ring follows a click or a digit too, so ↑/↓ and ←/→ walk on from the selected row.
@@ -389,7 +436,7 @@ export const register: Register = on => {
     }
     const toggleDone = (id: string, text: string, reopen: boolean, first?: () => Promise<unknown>) => reopen
       ? act($, 'reopening…', ['undone', id], `reopened · ${text}`, first)
-      : act($, 'marking done…', ['done', id], `done · ${text}`, first)
+      : act($, 'archiving…', ['done', id], `archived · ${text}`, first)
     const field = async (purpose: 'push' | 'in' | 'edit' | 'time') => {
       const needsOne = purpose === 'edit' || purpose === 'time'
       if (needsOne && (!current || current.state === 'done')) return needOne()
@@ -443,11 +490,12 @@ export const register: Register = on => {
           in: { label: 'reminder', hotkey: 'r', needsField: true, run: () => field('in') },
           edit: { label: 'edit', hotkey: 'e', needsField: true, group: true, run: () => field('edit') },
           time: { label: 'when', hotkey: 'w', needsField: true, run: () => field('time') },
-          done: { label: tb === 'done' ? 'reopen' : 'done', hotkey: 'd', run: () => (current ? toggleDone(current.id, current.text, current.state === 'done') : needOne()) },
+          done: { label: tb === 'archived' ? 'reopen' : 'archive', hotkey: 'd', run: () => (current ? toggleDone(current.id, current.text, current.state === 'done') : needOne()) },
           ack: { label: 'ack', hotkey: 'a', run: () => (current && current.state !== 'done' ? act($, 'acking…', ['ack', current.id], `acked · ${current.text}`) : needOne()) },
-          pop: { label: 'pop top', hotkey: 'p', group: true, run: () => confirm('pop') },
-          dequeue: { label: 'pop oldest', hotkey: 'o', run: () => confirm('dequeue') },
-          view: { label: tb === 'done' ? 'view stack' : 'view done', hotkey: 'v', group: true, run: () => switchView() },
+          // Pop and dequeue are off for now.
+          // pop: { label: 'pop top', hotkey: 'p', group: true, run: () => confirm('pop') },
+          // dequeue: { label: 'pop oldest', hotkey: 'o', run: () => confirm('dequeue') },
+          view: { label: `view ${label(after(tb)).toLowerCase()}`, hotkey: 'v', group: true, run: () => switchView() },
           refresh: { label: 'sync', hotkey: 's', run: () => refresh($) },
           // The checkout opens on the machine running Claude Code: of no use to someone on a phone.
           ...(e.surface !== 'mobile' ? { buy: { label: 'buy', hotkey: 'b', run: () => buy() } } : {}),
@@ -541,7 +589,8 @@ export const register: Register = on => {
       const text = raw.trim()
       if (!text) return cancel()
       const id = m.targetId ?? ''
-      const target = v.reminders.find(r => r.id === id)?.text ?? ''
+      const was = v.reminders.find(r => r.id === id)
+      const target = was?.text ?? ''
       const [dur = '', ...rest] = text.split(/\s+/)
       const keep = () => update($, mode, was => (was.kind === 'input' ? { ...was, value: raw } : was))
       if (m.purpose === 'in' && (!DURATION.test(dur) || rest.length === 0)) {
@@ -552,12 +601,13 @@ export const register: Register = on => {
         await keep()
         return say($, 'type a duration like 2h, or clear', 'error')
       }
+      // The pane stays on its tab; a row that lands on another one says where it went.
       const [verbing, args, done]: [string, string[], string] =
-        m.purpose === 'push' ? ['adding…', ['push', text], `added · ${text}`]
-        : m.purpose === 'in' ? ['scheduling…', ['in', dur, rest.join(' ')], `scheduled in ${dur} · ${rest.join(' ')}`]
+        m.purpose === 'push' ? ['adding…', ['push', text], tb === 'todos' ? `added · ${text}` : `added to TODOs · ${text}`]
+        : m.purpose === 'in' ? ['scheduling…', ['in', dur, rest.join(' ')], `${tb === 'reminders' ? 'scheduled' : 'added to Reminders, due'} in ${dur} · ${rest.join(' ')}`]
         : m.purpose === 'edit' ? ['saving…', ['edit', id, text], `edited · ${text}`]
-        : text === 'clear' ? ['setting due…', ['edit', id, '--clear-due'], `now a todo · ${target}`]
-        : ['setting due…', ['edit', id, '--in', text], `due in ${text} · ${target}`]
+        : text === 'clear' ? ['setting due…', ['edit', id, '--clear-due'], `${was?.due_at === null ? 'now a todo' : 'moved to TODOs'} · ${target}`]
+        : ['setting due…', ['edit', id, '--in', text], `${was?.due_at === null ? 'moved to Reminders, due' : 'due'} in ${text} · ${target}`]
       if (await act($, verbing, args, done)) await update($, mode, () => NORMAL)
       else await keep()
     }
@@ -583,10 +633,10 @@ export const register: Register = on => {
         {!loggedOut && !helping && (
           <Box>
             <Text> </Text>
-            {(['stack', 'done'] as const).map((key, i) => (
+            {TABS.map(([key, name], i) => (
               <Box key={`view-${key}`}>
                 {i > 0 && <Text dimColor> │ </Text>}
-                <Button key={`tab-${key}`} plain dimColor={key !== tb} onPress={go(() => switchView(key))}>{`${key === 'stack' ? 'Stack' : 'Done'} ${(key === 'done' ? v.done : v.reminders).length}`}</Button>
+                <Button key={`tab-${key}`} plain dimColor={key !== tb} onPress={go(() => switchView(key))}>{`${name} ${rowsOf(v, key).length}`}</Button>
               </Box>
             ))}
           </Box>
@@ -598,7 +648,7 @@ export const register: Register = on => {
             <Text> </Text>
             {HELP_GLYPHS.map(([glyph, tone, label]) => (
               <Box key={`glyph-${label}`}>
-                <Text color={tone === 'yellow' ? 'yellow' : undefined} dimColor={tone === 'dim'}>{`${glyph} `}</Text>
+                <Text color={tone === 'dim' ? undefined : tone} dimColor={tone === 'dim'}>{`${glyph} `}</Text>
                 <Text>{label}</Text>
               </Box>
             ))}
@@ -618,27 +668,27 @@ export const register: Register = on => {
           <Box flexDirection="column">
             {list.length === 0 && (offline && v.fetchedAt === null
               ? <Text color="red" wrap="truncate">{` ${v.failure?.text ?? ''}`}</Text>
-              : tb === 'done' ? (
+              : tb === 'archived' ? (
                 <Box flexDirection="column">
-                  <Text dimColor> Nothing finished yet.</Text>
-                  <Text dimColor> d marks a stack row done.</Text>
+                  <Text dimColor> Nothing archived yet.</Text>
+                  <Text dimColor> d archives the selected row.</Text>
                 </Box>
               )
               : (
                 <Box flexDirection="column">
-                  <Text dimColor> Nothing on the stack.</Text>
-                  {Input && <Text dimColor> p adds a todo, i a reminder.</Text>}
+                  <Text dimColor>{tb === 'todos' ? ' No todos.' : ' No reminders.'}</Text>
+                  {Input && <Text dimColor>{tb === 'todos' ? ' t adds one.' : ' r schedules one.'}</Text>}
                 </Box>
               ))}
             {list.map((r, i) => {
               const n = i + 1
-              // `▸ □ 1: ` is 7 cells; with rows 10+ every number takes their width, ` 9: ` above `10: `.
+              // `▸ ▎ 1: ` is 7 cells; with rows 10+ every number takes their width, ` 9: ` above `10: `.
               const digits = String(list.length).length
               const lead = 4 + digits + 2
               const isSel = r.id === sel
               const time = when(r, now)
-              const [glyph, tone] = mark(r)
-              // `▸ □ 1: text`, the time flush right; the selected row has the pointer and bold marks, as in `mokkan ui`.
+              const [glyph, settled] = mark(r)
+              // `▸ ▎ 1: text`, the time flush right; the selected row has the pointer and bold marks, as in `mokkan ui`.
               const text = fit(r.text, Math.max(4, width - lead - (time ? wide(time) + 2 : 0)))
               // No gap when an untimed row's text fills the width: one more cell would wrap the row.
               const gap = Math.max(time ? 1 : 0, width - lead - wide(text) - wide(time))
@@ -646,7 +696,7 @@ export const register: Register = on => {
                 <Box key={r.id} flexDirection="column">
                   <Box>
                     <Text bold={isSel}>{isSel ? '▸ ' : '  '}</Text>
-                    <Text bold={isSel} color={tone === 'yellow' ? 'yellow' : undefined} dimColor={tone === 'dim' && !isSel}>{`${glyph} `}</Text>
+                    <Text bold={isSel} color={kind(r)} dimColor={settled && !isSel}>{`${glyph} `}</Text>
                     {/* 1–9 are the Button's own hotkeys; 10+ draw their number, typed as two digits. */}
                     {n <= 9 ? digits > 1 && <Text>{' '.repeat(digits - 1)}</Text> : <Text bold={isSel}>{`${String(n).padStart(digits)}: `}</Text>}
                     <Button key={`row-${r.id}`} plain hotkey={n <= 9 ? String(n) : undefined} dimColor={(r.state === 'acknowledged' || r.state === 'done') && !isSel} onPress={go(() => (n <= 9 ? typed(n) : press(r)))}>
@@ -693,7 +743,7 @@ export const register: Register = on => {
             {/* The question names its target across the width, the answers their outcome below: `y: pop · n: keep`. */}
             <Text color="yellow">{m.action === 'logout'
               ? (m.target ? ` log out ${fit(m.target, width - 11)}?` : ' log out of mokkan here?')
-              : m.action === 'done' ? ` mark "${fit(m.target, width - 15)}" done?`
+              : m.action === 'done' ? ` archive "${fit(m.target, width - 13)}"?`
               : m.action === 'undone' ? ` reopen "${fit(m.target, width - 12)}"?`
               : ` pop "${fit(m.target, width - 9)}"?`}</Text>
             <Box>
@@ -702,7 +752,7 @@ export const register: Register = on => {
                 ? act($, 'logging out…', ['logout'], 'logged out', () => update($, mode, () => NORMAL))
                 : m.action === 'done' || m.action === 'undone'
                 ? toggleDone(m.targetId ?? '', m.target, m.action === 'undone', () => update($, mode, () => NORMAL))
-                : act($, 'popping…', [m.action], `popped · ${m.target}`, () => update($, mode, () => NORMAL)))}>{m.action === 'logout' ? 'log out' : m.action === 'done' ? 'done' : m.action === 'undone' ? 'reopen' : 'pop'}</Button>
+                : act($, 'popping…', [m.action], `popped · ${m.target}`, () => update($, mode, () => NORMAL)))}>{m.action === 'logout' ? 'log out' : m.action === 'done' ? 'archive' : m.action === 'undone' ? 'reopen' : 'pop'}</Button>
               <Text dimColor> · </Text>
               <Button key="no" hotkey="n" plain onPress={go(() => update($, mode, () => NORMAL))}>{m.action === 'logout' ? 'stay' : 'keep'}</Button>
             </Box>

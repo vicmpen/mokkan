@@ -19,7 +19,7 @@ const r3 = reminder({ id: 'cccc3333-0000-0000-0000-000000000000', text: 'buy mil
 function dashboard(over: Partial<TuiState> = {}): TuiState {
   return {
     ...initialState('a@example.com', 'api.mokkan.dev'),
-    reminders: [r1, r2, r3], version: 3, credits: 480, fetchedAt: new Date(NOW.getTime() - 8000),
+    tab: 'reminders', reminders: [r1, r2, r3], version: 3, credits: 480, fetchedAt: new Date(NOW.getTime() - 8000),
     message: { text: 'Pushed [f3a9c1d2] check the flaky login test', tone: 'green' },
     ...over,
   };
@@ -35,7 +35,7 @@ describe('render: dashboard', () => {
     expect(lines[0].startsWith(' mokkan · a@example.com · 480 credits · api.mokkan.dev')).toBe(true);
     expect(lines[0]).toMatch(/synced \d\d:\d\d$/);
     expect(displayWidth(lines[0])).toBe(79);
-    expect(lines[1].trimEnd()).toBe(' Stack 3 │ Done');
+    expect(lines[1].trimEnd()).toBe(' TODOs 1 │ Reminders 2 │ Archived');
     expect(lines[2]).toBe('─'.repeat(79));
     expect(displayWidth(lines[3])).toBe(79);
     expect(lines[3].startsWith('▸ ● 1: check the flaky login test')).toBe(true);
@@ -46,12 +46,14 @@ describe('render: dashboard', () => {
     expect(raw[4]).toContain('\x1b[2mreminder · added 3h ago');
     expect(lines[5].startsWith('  ○ 2: ask Maria about the release notes')).toBe(true);
     expect(lines[5].endsWith('40m ago')).toBe(true);
-    expect(lines[6].trimEnd()).toBe('  □ 3: buy milk'); // a todo: no time column
-    expect(lines.slice(7, 21).every((l) => l === '')).toBe(true);
+    expect(lines.slice(6, 21).every((l) => l === '')).toBe(true); // the todo is on its own tab
     expect(lines[21].trimEnd()).toBe(' Pushed [f3a9c1d2] check the flaky login test');
-    expect(lines[22].trimEnd()).toBe(' t todo · r reminder · e edit · w when · d done · a ack · v view done · q quit');
-    expect(lines[23].trimEnd()).toBe(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move');
+    expect(lines[22].trimEnd()).toBe(' t todo · r reminder · e edit · w when · d archive · a ack · v view archived');
+    expect(lines[23].trimEnd()).toBe(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move · q quit');
     expect(cursorPosition(dashboard(), SIZE)).toBeNull();
+    const todos = plain(render(dashboard({ tab: 'todos' }), SIZE, NOW));
+    expect(todos[3].trimEnd()).toBe('▸ □ 1: buy milk'); // a todo: no time column
+    expect(todos[22].trimEnd()).toBe(' t todo · r reminder · e edit · w when · d archive · a ack · v view reminders');
   });
 
   it('shows header states: syncing, offline with data age, credits, low and none, loading', () => {
@@ -80,16 +82,17 @@ describe('render: dashboard', () => {
     expect(displayWidth(header)).toBe(79);
   });
 
-  it('marks the views and counts, and shows the done count once loaded', () => {
+  it('marks the views and counts, and shows the archived count once loaded', () => {
     const stack = plain(render(dashboard({ reminders: [reminder({ id: 'd', text: 's', state: 'scheduled', due_at: at(40 * MIN) }), r1] }), SIZE, NOW));
-    expect(stack[1].trimEnd()).toBe(' Stack 2 │ Done');
+    expect(stack[1].trimEnd()).toBe(' TODOs 0 │ Reminders 2 │ Archived');
     expect(stack[3].startsWith('▸ ◷ 1: s')).toBe(true);
     expect(stack[3].endsWith('in 40m')).toBe(true);
     const gone = reminder({ id: 'x', text: 'gone', state: 'done', done_at: at(-2 * HOUR), created_at: at(-26 * HOUR) });
-    const done = plain(render(dashboard({ tab: 'done', done: [gone] }), SIZE, NOW));
-    expect(done[1].trimEnd()).toBe(' Stack 3 │ Done 1');
+    const done = plain(render(dashboard({ tab: 'archived', done: [gone] }), SIZE, NOW));
+    expect(done[1].trimEnd()).toBe(' TODOs 1 │ Reminders 2 │ Archived 1');
     expect(done[3].trimEnd()).toBe('▸ ✓ 1: gone');
-    expect(done[4].trimEnd()).toBe('       done 2h ago · added 1d ago');
+    expect(done[4].trimEnd()).toBe('       archived 2h ago · added 1d ago');
+    expect(done[22].trimEnd()).toBe(' t todo · r reminder · e edit · w when · d reopen · a ack · v view todos');
   });
 
   it('tells todos from reminders by glyph and time column; only a due timed reminder is yellow', () => {
@@ -103,21 +106,22 @@ describe('render: dashboard', () => {
       reminder({ id: 'g', text: 'acked', state: 'acknowledged', due_at: at(-40 * MIN) }),
       reminder({ id: 'h', text: 'flip pending', state: 'scheduled', due_at: at(-MIN) }),
     ];
-    const raw = render(dashboard({ reminders: rows, selected: 7 }), SIZE, NOW);
+    const todos = render(dashboard({ reminders: rows, tab: 'todos', selected: -1 }), SIZE, NOW);
+    expect(plain(todos).slice(3, 6).map((l) => l.trimEnd())).toEqual(['  □ 1: todo due', '  □ 2: todo seen', '  □ 3: todo acked']);
+    expect(todos.slice(3, 6).join('')).not.toContain('\x1b[33m'); // todos are never yellow
+    expect(todos[5]).toContain('\x1b[2m□'); // an acknowledged todo is dim
+    const raw = render(dashboard({ reminders: rows, selected: 4 }), SIZE, NOW);
     const lines = plain(raw);
-    expect(lines.slice(3, 11).map((l) => l.trimEnd().replace(/(\S) {2,}/g, '$1 | '))).toEqual([
-      '  □ 1: todo due', '  □ 2: todo seen', '  □ 3: todo acked', '  ◷ 4: later | in 40m',
-      '  ● 5: late | overdue 3h', '  ○ 6: seen | 2d ago', '  · 7: acked | 40m ago', '▸ ● 8: flip pending | overdue 1m',
+    expect(lines.slice(3, 8).map((l) => l.trimEnd().replace(/(\S) {2,}/g, '$1 | '))).toEqual([
+      '  ◷ 1: later | in 40m', '  ● 2: late | overdue 3h', '  ○ 3: seen | 2d ago', '  · 4: acked | 40m ago', '▸ ● 5: flip pending | overdue 1m',
     ]);
-    expect(raw.slice(3, 6).join('')).not.toContain('\x1b[33m'); // todos are never yellow
-    expect(raw[5]).toContain('\x1b[2m□'); // an acknowledged todo is dim
-    expect(raw[6]).toContain('\x1b[2m◷');
-    expect(raw[6]).toContain('\x1b[2min 40m');
-    expect(raw[7]).toContain('\x1b[33m●');
-    expect(raw[7]).toContain('\x1b[31moverdue 3h');
-    expect(raw[8]).toContain('\x1b[2m2d ago');
-    expect(raw[9]).toContain('\x1b[2m·');
-    expect(lines[11].trimEnd()).toBe('       reminder · added 0s ago');
+    expect(raw[3]).toContain('\x1b[2m◷');
+    expect(raw[3]).toContain('\x1b[2min 40m');
+    expect(raw[4]).toContain('\x1b[33m●');
+    expect(raw[4]).toContain('\x1b[31moverdue 3h');
+    expect(raw[5]).toContain('\x1b[2m2d ago');
+    expect(raw[6]).toContain('\x1b[2m·');
+    expect(lines[8].trimEnd()).toBe('       reminder · added 0s ago');
   });
 
   it('formats future times as in 40m, 17:00, Wed 17:00 and 12 Oct, in local time', () => {
@@ -130,16 +134,17 @@ describe('render: dashboard', () => {
 
   it('shows the detail line for the selected row only: kind, added, shown, acked', () => {
     const t = reminder({ id: 't', text: 'renew the TLS cert', state: 'acknowledged', created_at: at(-3 * HOUR), delivered_at: at(-HOUR), acknowledged_at: at(-MIN) });
-    const lines = plain(render(dashboard({ reminders: [r1, t], selected: 1 }), SIZE, NOW));
-    expect(lines[3].startsWith('  ● 1: check')).toBe(true);
+    const lines = plain(render(dashboard({ reminders: [r3, t], tab: 'todos', selected: 1 }), SIZE, NOW));
+    expect(lines[3].trimEnd()).toBe('  □ 1: buy milk');
     expect(lines[4].trimEnd()).toBe('▸ □ 2: renew the TLS cert');
     expect(lines[5].trimEnd()).toBe('       todo · added 3h ago · shown 1h ago · acked 1m ago');
     expect(lines[6]).toBe('');
   });
 
   it('shows empty views', () => {
-    expect(plain(render(dashboard({ reminders: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing on the stack. t adds a todo, r a reminder.');
-    expect(plain(render(dashboard({ tab: 'done', done: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing finished yet.');
+    expect(plain(render(dashboard({ tab: 'todos', reminders: [r1] }), SIZE, NOW))[3].trimEnd()).toBe(' No todos. t adds one.');
+    expect(plain(render(dashboard({ reminders: [r3] }), SIZE, NOW))[3].trimEnd()).toBe(' No reminders. r schedules one.');
+    expect(plain(render(dashboard({ tab: 'archived', done: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing archived yet. d archives the selected row.');
   });
 
   it('starts error messages with error: in red', () => {
@@ -151,7 +156,7 @@ describe('render: dashboard', () => {
 
   it('scrolls from state.scroll', () => {
     const many = Array.from({ length: 30 }, (_, i) => reminder({ id: `r${i}`, text: `item ${i + 1}`, position: 30 - i }));
-    const lines = plain(render(dashboard({ reminders: many, selected: 25, scroll: 9 }), SIZE, NOW));
+    const lines = plain(render(dashboard({ reminders: many, tab: 'todos', selected: 25, scroll: 9 }), SIZE, NOW));
     expect(lines[3].startsWith('  □ 10: item 10')).toBe(true);
     expect(lines[18].startsWith('  □ 25: item 25')).toBe(true);
     expect(lines[19].startsWith('▸ □ 26: item 26')).toBe(true); // selected 25, scroll 9: 17 rows and the detail line
@@ -172,12 +177,12 @@ describe('render: dashboard', () => {
   });
 
   it('never lets a reminder inject escape codes, and keeps wide text inside the width', () => {
-    const evil = reminder({ id: 'e', text: 'evil\x1b[31mred\ntext', state: 'delivered', position: 1 });
+    const evil = reminder({ id: 'e', text: 'evil\x1b[31mred\ntext', state: 'delivered', position: 1, due_at: at(-MIN) });
     const raw = render(dashboard({ reminders: [r1, evil] }), SIZE, NOW);
     expect(strip(raw[5])).toContain('evil [31mred text'); // the ESC byte became a space, so nothing is interpreted
     expect(raw[5]).not.toContain('\x1b[31m');
     const wide = reminder({ id: 'w', text: '🚀'.repeat(30), position: 1 });
-    const lines = plain(render(dashboard({ reminders: [wide] }), { columns: 40, rows: 24 }, NOW));
+    const lines = plain(render(dashboard({ reminders: [wide], tab: 'todos' }), { columns: 40, rows: 24 }, NOW));
     expect(displayWidth(lines[3])).toBe(39);
     const ja = reminder({ id: 'j', text: '日本語のテキスト'.repeat(6), position: 1, due_at: at(-20 * MIN) });
     const jaLine = plain(render(dashboard({ reminders: [ja] }), { columns: 40, rows: 24 }, NOW))[3];

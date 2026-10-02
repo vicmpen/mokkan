@@ -1,6 +1,6 @@
 import { cleanText, formatAge, type Tone } from '../text.js';
 import type { Reminder } from '../types.js';
-import { CHROME_ROWS, rowsOf, type Size, type Tab, type TuiState } from './state.js';
+import { CHROME_ROWS, TABS, inTab, nextTab, rowsOf, tabLabel, type Size, type TuiState } from './state.js';
 import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
 
 export type { Size };
@@ -131,7 +131,8 @@ function dashboardLines(state: TuiState, size: Size, now: Date): string[] {
   const items = rowsOf(state);
   const list: string[] = [];
   if (items.length === 0) {
-    const empty = state.tab === 'done' ? ['Nothing finished yet.', 'd marks a stack row done.'] : ['Nothing on the stack. t adds a todo, r a reminder.'];
+    const empty = state.tab === 'archived' ? ['Nothing archived yet. d archives the selected row.']
+      : state.tab === 'todos' ? ['No todos. t adds one.'] : ['No reminders. r schedules one.'];
     for (const text of empty) list.push(line([part(` ${text}`, 'dim')], [], columns));
   } else {
     const numberWidth = String(items.length).length;
@@ -176,11 +177,12 @@ function status(state: TuiState, now: Date, maxWidth: number): Part {
 }
 
 function tabs(state: TuiState, columns: number): string {
-  const labels: [Tab, string][] = [['stack', `Stack ${state.reminders.length}`], ['done', state.done ? `Done ${state.done.length}` : 'Done']];
   const parts: Part[] = [part(' ')];
-  labels.forEach(([tab, label], i) => {
+  TABS.forEach(([tab, label], i) => {
+    // The archived count is known once the view has been loaded.
+    const count = tab === 'archived' ? state.done?.length : state.reminders.filter((r) => inTab(r, tab)).length;
     if (i > 0) parts.push(part(' │ ', 'dim'));
-    parts.push(part(label, tab === state.tab ? 'bold' : 'dim'));
+    parts.push(part(count === undefined ? label : `${label} ${count}`, tab === state.tab ? 'bold' : 'dim'));
   });
   return line(parts, [], columns);
 }
@@ -228,11 +230,11 @@ function row(r: Reminder, index: number, numberWidth: number, selected: boolean,
   });
 }
 
-/** The line under the selected row: `todo · added 3h ago · shown 1h ago · acked 5m ago`, or `done 2h ago · added 1d ago`. */
+/** The line under the selected row: `todo · added 3h ago · shown 1h ago · acked 5m ago`, or `archived 2h ago · added 1d ago`. */
 function detail(r: Reminder, now: Date): string {
   const ago = (at: string): string => `${formatAge(now.getTime() - Date.parse(at))} ago`;
   const added = `added ${ago(r.created_at)}`;
-  if (r.state === 'done') return r.done_at ? `done ${ago(r.done_at)} · ${added}` : `done · ${added}`;
+  if (r.state === 'done') return r.done_at ? `archived ${ago(r.done_at)} · ${added}` : `archived · ${added}`;
   const parts = [isTodo(r) ? 'todo' : 'reminder', added];
   if (r.delivered_at) parts.push(`shown ${ago(r.delivered_at)}`);
   if (r.acknowledged_at) parts.push(`acked ${ago(r.acknowledged_at)}`);
@@ -248,14 +250,14 @@ function footer(state: TuiState, columns: number): string[] {
   }
   if (m.kind === 'confirm') {
     // The reminder is shortened, never the answers; the answers name their outcome.
-    const [before, after, yes] = m.action === 'done' ? ['mark ', ' done', 'done'] : m.action === 'undone' ? ['reopen ', '', 'reopen'] : ['pop ', '', 'pop'];
+    const [before, after, yes] = m.action === 'done' ? ['archive ', '', 'archive'] : m.action === 'undone' ? ['reopen ', '', 'reopen'] : ['pop ', '', 'pop'];
     const room = columns - displayWidth(` ${before}""${after}?  y: ${yes}  n: keep`);
     return [line([part(` ${before}"${fit(clean(m.text), room)}"${after}?  y: ${yes}  n: keep`, 'yellow')], [], columns), ''];
   }
-  const inDone = state.tab === 'done';
+  const archived = state.tab === 'archived';
   return [
-    line([part(` t todo · r reminder · e edit · w when · d ${inDone ? 'reopen' : 'done'} · a ack · v ${inDone ? 'view stack' : 'view done'} · q quit`, 'dim')], [], columns),
-    line([part(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move', 'dim')], [], columns),
+    line([part(` t todo · r reminder · e edit · w when · d ${archived ? 'reopen' : 'archive'} · a ack · v view ${tabLabel(nextTab(state.tab)).toLowerCase()}`, 'dim')], [], columns),
+    line([part(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move · q quit', 'dim')], [], columns),
   ];
 }
 

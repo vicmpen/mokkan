@@ -10,7 +10,7 @@ import { UserError } from './errors.js';
 import { promptLine, readAllStdin } from './prompt.js';
 import { loginCommand, logoutCommand, registerCommand, statusCommand } from './commands/auth.js';
 import { doneCommand, listCommand, pendingCommand } from './commands/list.js';
-import { ackCommand, editCommand, inCommand, pushCommand, takeCommand, markDoneCommand } from './commands/mutate.js';
+import { ackCommand, deliverCommand, editCommand, inCommand, pushCommand, takeCommand, markDoneCommand } from './commands/mutate.js';
 import { balanceCommand, buyCommand, openUrlDetached } from './commands/billing.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
 import { uiCommand } from './commands/ui.js';
@@ -150,6 +150,7 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
   mokkan heartbeat [--source X]   tell the server a session is active
+  mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
   mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
@@ -313,6 +314,7 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
       case 'dequeue': return await takeCommand(ctx, 'dequeue');
       case 'in': return await inCommand(ctx, args);
       case 'ack': return await ackCommand(ctx, args);
+      case 'deliver': return await deliverCommand(ctx, args);
       case 'edit': return await editCommand(ctx, args);
       case 'register': return await registerCommand(ctx, args);
       case 'login': return await loginCommand(ctx, args);

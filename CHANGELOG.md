@@ -2,6 +2,9 @@
 
 ## 0.5.0 — unreleased
 
+- **`/mokkan` toggles the pane.** `/mokkan-pane` is gone. `/mokkan` on its own opens the pane, or closes it when it is open; `/mokkan push milk` (any command) runs it and prints the output straight away, with no model turn. A user-level `/mokkan` from `install.sh` keeps working, and where the plugin is loaded the plugin answers it. `/mokkan:mokkan` stays as the skill Claude runs.
+- **No more session hooks.** The plugin's SessionStart and Stop hooks are gone: the pane polls every 15 seconds, toasts what comes due and tells the server a session is active, so nothing is put into the conversation any more.
+- **TODOs, Reminders and Archived.** The pane and `mokkan ui` split the stack into a TODOs tab (no due time) and a Reminders tab (a due time), each with its own count and row numbers, and Done is renamed Archived (`d` archives, and reopens there). The view opens on Reminders while one is due. `t`, `r` and `w` leave you on your tab and say where the item went. In `mokkan ui`, only the due rows on the tab you are looking at count as shown.
 - **Stray keys stay out of the prompt.** While the pane has the keyboard, a key it doesn't use does nothing; it used to leave the pane and land in Claude's prompt. ctrl/cmd combinations, pastes and typing after `Esc` reach the prompt as before.
 
 ## 0.4.0

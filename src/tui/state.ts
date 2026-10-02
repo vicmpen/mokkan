@@ -2,8 +2,13 @@ import type { Tone } from '../text.js';
 import type { Reminder } from '../types.js';
 
 export type { Tone };
-/** `stack`: every open reminder (`list('all')`); `done`: the finished ones. */
-export type Tab = 'stack' | 'done';
+/** `todos` and `reminders`: the open ones (`list('all')`) without and with a due time; `archived`: the finished ones. */
+export type Tab = 'todos' | 'reminders' | 'archived';
+/** The tabs in `v` order, with their labels. */
+export const TABS: readonly (readonly [Tab, string])[] = [['todos', 'TODOs'], ['reminders', 'Reminders'], ['archived', 'Archived']];
+export const tabLabel = (tab: Tab): string => TABS.find(([t]) => t === tab)![1];
+/** The tab `v` goes to next. */
+export const nextTab = (tab: Tab): Tab => TABS[(TABS.findIndex(([t]) => t === tab) + 1) % TABS.length][0];
 export interface Size { columns: number; rows: number }
 
 export type InputPurpose = 'push' | 'in' | 'edit' | 'time';
@@ -41,9 +46,9 @@ export interface TuiState {
   screen: 'login' | 'dashboard';
   login: LoginState;
   tab: Tab;
-  /** Every non-done reminder, top of stack first (`list('all')`): the stack view. */
+  /** Every non-done reminder, top of stack first (`list('all')`): the todos and reminders views. */
   reminders: Reminder[];
-  /** `list('done')`, loaded on the first visit to the done view and kept fresh after it. */
+  /** `list('done')`, loaded on the first visit to the archived view and kept fresh after it. */
   done: Reminder[] | null;
   version: number | null;
   /** Index into the current view's rows. */
@@ -78,13 +83,16 @@ export function initialState(email: string | null, host: string): TuiState {
   return {
     screen: email === null ? 'login' : 'dashboard',
     login: emptyLogin(),
-    tab: 'stack', reminders: [], done: null, version: null, selected: 0, scroll: 0,
+    tab: 'todos', reminders: [], done: null, version: null, selected: 0, scroll: 0,
     email: email ?? '', host, credits: null,
     fetchedAt: null, refreshing: false, error: null, message: null, mode: { kind: 'normal' },
   };
 }
 
-/** The rows of the current view, numbered as `mokkan list --all` / `mokkan done` number them. */
+/** Whether an open reminder belongs on `tab`: a todo has no due time, a reminder has one. */
+export const inTab = (r: Reminder, tab: Tab): boolean => tab !== 'archived' && (r.due_at === null) === (tab === 'todos');
+
+/** The rows of the current view, in `mokkan list --all` / `mokkan done` order. */
 export function rowsOf(state: TuiState): Reminder[] {
-  return state.tab === 'done' ? state.done ?? [] : state.reminders;
+  return state.tab === 'archived' ? state.done ?? [] : state.reminders.filter((r) => inTab(r, state.tab));
 }
