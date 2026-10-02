@@ -33,6 +33,11 @@ let said = 0
 let pending: { digit: number; at: number } | null = null
 /** The CLI's argv, looked up once per load of this module (the first refresh's three calls share the lookup). */
 let resolved: Promise<string[]> | null = null
+/** Whether the pane held the keys at its last draw, and when a draw last saw it let them go: a key no Button binds leaves the pane and reaches the prompt around that redraw, just before or just after it. */
+let heldKeys = false
+let lostAt = 0
+/** A key this soon after the pane lost the keys is one that leaked; typing after Esc comes later. */
+const LEAK_MS = 100
 
 /** The CLI: this plugin's own bundle, then a dev checkout next to it, then `mokkan` on PATH. */
 function cli($: EngineInterface): Promise<string[]> {
@@ -304,7 +309,23 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // A key no Button binds leaves the pane for the prompt: one typed while the pane held the keys is dropped, and the pane takes them back.
+  // ctrl/cmd combinations and pastes go on; Esc never reaches here.
+  on('prompt.edit', async ($, e, next) => {
+    if (e.key === undefined || e.key.ctrl || e.key.meta || [...e.inputText].length !== 1) return next(e)
+    const [panes, now] = await Promise.all([$.ui.panes(), $.clock.now()])
+    const leaked = panes.some(p => p.id === PANE) && (heldKeys || (lostAt > 0 && now - lostAt < LEAK_MS))
+    if (!leaked) return next(e)
+    void $.ui.open({ id: PANE, title: 'mokkan', columns: COLUMNS, focus: true })
+    return { text: e.text, cursor: e.cursor }
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    if (e.surface === 'terminal') {
+      const holds = e.props.isFocused !== false
+      if (heldKeys && !holds) lostAt = await $.clock.now()
+      heldKeys = holds
+    }
     const t = $.ui.resolve(e)
     const { Box, Text, Button } = t
     const Input = e.surface !== 'mobile' && 'Input' in t ? t.Input : null // mobile has no Input

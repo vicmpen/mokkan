@@ -1,6 +1,7 @@
 # Pane keyboard: a `Client` refactor? (2026-10-02)
 
-Status: proposal, nothing built. Next step is the spike at the end.
+Status: decided, no `Client` refactor. A `prompt.edit` hook drops the keys that leak, see
+"Decision" at the end.
 
 ## The problem
 
@@ -117,3 +118,64 @@ events, and answer:
 If `Input` and clicks work inside a `Client`, this is a moderate refactor: a new key
 handler, and the actions moved to `ui.message`. If not, add the line editor and pointer
 mapping on top. Until then, keep route 1 and bind the keys that actually leak.
+
+## Spike results (2026-10-02)
+
+The spike is `/mokkan-pane spike` on branch `pane-client-spike`: `hooks/spike-client.tsx` logs
+keys and pointer events and holds an `Input`, a `z` Button and 60 filler rows;
+`hooks/spike-import.tsx` imports `hooks/spike-shared.ts`. Tried by hand in a terminal, plus
+`tests/spike.test.tsx`.
+
+1. **Focus.** Once the `Client` has the keys, it gets every key, and Esc hands them back to the
+   prompt. That is the behaviour asked for. A click on the body (left of the list) gives it the
+   keys. A click on a Button inside it does not: the Button presses, the pointer events are
+   logged, and the pane stays unfocused. ctrl+x tab and `/mokkan-pane focus` do not give the
+   keys: the pane reports itself focused, but what you type goes to the prompt. A click is
+   the only way in.
+2. **`Input` and Buttons in a `Client`.** You can't type into an `Input` inside a `Client` in
+   the terminal, so the module needs its own line editor (insert, backspace, paste, Enter,
+   masking). Buttons do take clicks, but a click on one does not focus the `Client` (see 1).
+   The test kit drives both by key, so a passing test does not prove the terminal does.
+3. **Sibling import.** Works: the engine accepts the module and draws the imported text. The
+   text helpers can live in a shared module, if passing finished lines as props turns out
+   awkward.
+4. **Scrolling a `Client` taller than the pane.** The pane scrolls it with the wheel, down to
+   the last filler row. Not checked: keeping the selected row in view as ↑/↓ move it, since
+   `$.ui.scroll({ to: { key } })` targets the pane's own elements, not rows a `Client` draws.
+
+### What it changes
+
+- The refactor is the larger variant: a line editor and the key handler, with actions moved
+  to `ui.message`.
+- Clicks: draw rows as plain `Text` and map `onPointer`'s `y` to a row, rather than Buttons.
+  A Button click would leave the pane without the keys, which defeats the point. The same
+  goes for the view tabs and the legend: map them too, or leave them as text.
+- Focus is click-only. ctrl+x tab, `/mokkan-pane focus` and the `focus` on open would mark the
+  pane focused while every key still goes to the prompt, which is worse than today. Either
+  drop `focus` (the command, the open option, the "ctrl+x tab" hints and help line) and say
+  "click the pane to use keys", or keep a Button-tree view for the focused-without-a-click case.
+  Dropping it is simpler, and matches the ask.
+
+## Decision: catch the leaked key in `prompt.edit` (built)
+
+The `Client` route works, but it costs keyboard focus, `Input` (a line editor instead), Button
+clicks, and a second tree for mobile and vscode. A smaller route closes the leak and keeps the
+Button tree, keyboard focus and the tests:
+
+- `prompt.edit` fires for a key the prompt's editor takes, with the key on `e.key`, and a hook
+  answering `{ text: e.text, cursor: e.cursor }` without `next` consumes it (d.ts, build
+  2.1.287; the online reference lists `prompt.edit` but doesn't spell out consuming).
+- A key no Button binds leaves the pane and arrives there. Tried by hand: it did, the hook
+  dropped it, and `$.ui.open({ focus: true })` from the hook gave the pane the keys back (`h`
+  opened the help right after).
+- Which key is the pane's: the engine already reports the pane unfocused when the key arrives
+  (`$.ui.panes()`), so that can't tell. The pane's own last draw can: the redraw that says it
+  let go comes just before or just after the leaked key. So the hook drops a single unmodified
+  key while the pane last drew itself focused, or within 100 ms of the draw that saw it let
+  go, and only while the pane is open. Typing after Esc comes later and passes.
+- ctrl/cmd combinations and pastes always pass. The `b · buy` and `0: row 10, 20…` Buttons
+  stay: they are real keys, and `1` then `0` needs the pane to see the `0`.
+
+Not seen by hand yet: the order where the redraw comes first and the 100 ms window catches the
+key. It's covered by a test only. Esc and a key typed within 100 ms of each other would lose that
+key.

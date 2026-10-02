@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import type { On, PromptEditInput, PromptEditResult } from 'claude-code'
 
 const NOW = Date.parse('2026-10-02T12:00:00Z')
 const at = (mins: number) => new Date(NOW + mins * 60_000).toISOString()
@@ -33,11 +33,12 @@ const RUN = { origin: { kind: 'composer' }, presentation: { isFullscreen: true, 
 function fakeCli(on: On) {
   const clock = mock.clock(on, { now: NOW })
   const panes: { id: string }[] = []
+  const opens: Record<string, unknown>[] = []
   const toasts: string[] = []
   const toastMs: (number | undefined)[] = []
   const commands: Record<string, unknown>[] = []
   let stats = 0
-  on('ui.open', (_, e) => { if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
+  on('ui.open', (_, e) => { opens.push({ ...e }); if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
   on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); toastMs.push((e as { timeoutMs?: number }).timeoutMs); return { value: undefined } })
   on('ui.focus', () => ({}))
@@ -69,7 +70,7 @@ function fakeCli(on: On) {
     if (cmd === 'push') stack.unshift(row('f6f6f6f6-0000-4000-8000-000000000006', e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, envs, clock, toasts, toastMs, commands, panes, stats: () => stats }
+  return { ran, session, envs, clock, toasts, toastMs, commands, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -674,4 +675,38 @@ test('the cancel button leaves the field and the auth flow', async ($, on) => {
   expect(await ui.find({ key: 'auth' })).toBeUndefined()
   expect(ran.some(a => a[2] === 'login')).toBe(false)
   await ui.unmount()
+})
+
+test('a key no Button binds, typed while the pane holds the keys, is dropped and the pane takes them back', async ($, on) => {
+  const { clock, panes, opens } = fakeCli(on)
+  // The editor's own answer beneath the plugin: the edit applied.
+  on('prompt.edit', (_, e) => ({ text: e.text.slice(0, e.start) + e.inputText + e.text.slice(e.end), cursor: e.start + e.inputText.length }))
+  await opened($, clock)
+  // The kit raises prompt.edit, but its Engine type leaves the call out.
+  const edit = ($ as unknown as { prompt: { edit: (e: PromptEditInput) => Promise<PromptEditResult> } }).prompt.edit
+  const type = (key: string, more: { ctrl?: true } = {}) =>
+    edit({ origin: { kind: 'composer' }, key: { key, ...more }, text: '', cursor: 0, start: 0, end: 0, inputText: key })
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  opens.length = 0
+
+  expect(await type('x')).toEqual({ text: '', cursor: 0 })
+  expect(opens).toEqual([expect.objectContaining({ id: 'mokkan', focus: true })])
+  // ctrl/cmd combinations and pastes are the prompt's.
+  expect(await type('u', { ctrl: true })).toEqual({ text: 'u', cursor: 1 })
+  expect(await edit({ origin: { kind: 'composer' }, text: '', cursor: 0, start: 0, end: 0, inputText: ';' })).toEqual({ text: ';', cursor: 1 })
+
+  // The key can land just after the redraw that says the pane let go.
+  await ui.redraw({ ...PANE.props, isFocused: false })
+  expect(await type(';')).toEqual({ text: '', cursor: 0 })
+  // Typed after Esc, it is the prompt's.
+  await clock.advance(1000)
+  opens.length = 0
+  expect(await type('f')).toEqual({ text: 'f', cursor: 1 })
+  expect(opens).toEqual([])
+
+  // A closed pane never takes a key, nor reopens.
+  await ui.redraw({ ...PANE.props, isFocused: true })
+  panes.length = 0
+  expect(await type('f')).toEqual({ text: 'f', cursor: 1 })
+  expect(opens).toEqual([])
 })
