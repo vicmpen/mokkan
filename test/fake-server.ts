@@ -138,8 +138,8 @@ export class FakeServer {
         return { status: 400, body: { error: 'validation', message: 'Provide text and/or due_at' } };
       }
       const text = patch.text?.trim();
-      if (text !== undefined && (text.length < 1 || text.length > 2000)) {
-        return { status: 400, body: { error: 'validation', message: 'text must be 1..2000 characters' } };
+      if (text !== undefined && (text.length < 1 || [...text].length > 200)) {
+        return { status: 400, body: { error: 'validation', message: 'text must be 1..200 characters' } };
       }
       if (patch.expected_version !== undefined && patch.expected_version !== acct.version) {
         const reminders = [...acct.reminders.values()].filter((r) => ['due', 'delivered', 'acknowledged'].includes(r.state))

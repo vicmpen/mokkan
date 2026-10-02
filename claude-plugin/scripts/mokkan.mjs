@@ -45,6 +45,10 @@ function apiErrorHint(err) {
   }
   return null;
 }
+var MAX_TEXT = 200;
+function checkLength(text) {
+  if ([...text.trim()].length > MAX_TEXT) throw new ApiError(400, "validation", `text is longer than ${MAX_TEXT} characters`);
+}
 var NetworkError = class extends Error {
   constructor(message, cause) {
     super(message);
@@ -177,14 +181,16 @@ var MokkanClient = class {
   list(scope = "active") {
     return this.authed("GET", `/reminders?scope=${scope}`);
   }
-  push(text, dueAt, clientId) {
+  async push(text, dueAt, clientId) {
+    checkLength(text);
     const body = { text };
     if (dueAt) body.due_at = dueAt.toISOString();
     if (clientId !== void 0) body.client_id = clientId;
     return this.changing(this.authed("POST", "/reminders", body));
   }
   /** Changes text and/or due_at (null clears it). Every 3rd successful edit costs a credit. */
-  editReminder(id, patch, expectedVersion) {
+  async editReminder(id, patch, expectedVersion) {
+    if (patch.text !== void 0) checkLength(patch.text);
     const body = {};
     if (patch.text !== void 0) body.text = patch.text;
     if (patch.due_at !== void 0) body.due_at = patch.due_at === null ? null : patch.due_at.toISOString();
@@ -949,8 +955,8 @@ async function heartbeatCommand(ctx) {
 }
 
 // src/text.ts
-var MAX_TEXT = 40;
-function cleanText(text, max = MAX_TEXT) {
+var MAX_TEXT2 = 40;
+function cleanText(text, max = MAX_TEXT2) {
   const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
 }

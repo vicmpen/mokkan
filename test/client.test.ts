@@ -161,6 +161,17 @@ describe('MokkanClient', () => {
     expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 5 });
   });
 
+  it('refuses text over 200 code points before sending it', async () => {
+    const reminder = { id: 'r1', text: 'x', state: 'due', position: 1, due_at: null, created_at: NOW.toISOString(), delivered_at: null, acknowledged_at: null, done_at: null };
+    server.on('POST', '/reminders', () => ({ status: 201, body: { version: 1, reminder } }));
+    const c = new MokkanClient({ baseUrl: server.url, credentials: creds(), now: () => NOW });
+    await expect(c.push('x'.repeat(201))).rejects.toMatchObject({ status: 400, code: 'validation', message: 'text is longer than 200 characters' });
+    await expect(c.editReminder('r1', { text: '🚀'.repeat(201) })).rejects.toMatchObject({ status: 400, code: 'validation' });
+    expect(server.requests).toHaveLength(0);
+    await c.push(`  ${'🚀'.repeat(200)}  `);
+    expect(server.count('POST', '/reminders')).toBe(1);
+  });
+
   it('serialises push, dequeue, deliver and ack bodies exactly', async () => {
     const reminder = { id: 'r1', text: 'x', state: 'due', position: 1, due_at: null, created_at: NOW.toISOString(), delivered_at: null, acknowledged_at: null, done_at: null };
     server.on('POST', '/reminders', () => ({ status: 201, body: { version: 1, reminder } }));

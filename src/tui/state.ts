@@ -69,7 +69,7 @@ export interface TuiState {
 /** Screen rows that are not list rows: header, tabs, rule, the selected row's detail, message and two footer lines. */
 export const CHROME_ROWS = 7;
 
-/** Longest text an input line or login field accepts, in code points (the server's limit for reminder text). */
+/** Longest text an input line or login field accepts, in code points (reminder text itself is capped at `MAX_TEXT`). */
 export const MAX_INPUT_CODE_POINTS = 2000;
 
 /** The states `mokkan list` shows, which pop and dequeue take from; the stack view adds `scheduled`. */

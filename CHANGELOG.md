@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Todos and reminders are capped at 200 characters.** The server refuses longer text on push and edit (400, was 2000), counted in code points after trimming, and the CLI, the pane and `mokkan ui` refuse it before sending. Existing longer items stay as they are until edited.
+
 ## 0.6.1
 
 - **The selected row shows all of its text.** In the pane and `mokkan ui`, the selected row wraps its whole text under the text column, above its history line; the other rows stay cut to one line. In `mokkan ui` the list scrolls to keep the expanded row in view, and text taller than the list ends in `…`.

@@ -25,6 +25,14 @@ export function apiErrorHint(err: ApiError): string | null {
   return null;
 }
 
+/** Longest reminder or todo text, in code points after trimming; the server enforces the same limit. */
+export const MAX_TEXT = 200;
+
+/** Refuses an over-long text before the request, with the server's own error. */
+function checkLength(text: string): void {
+  if ([...text.trim()].length > MAX_TEXT) throw new ApiError(400, 'validation', `text is longer than ${MAX_TEXT} characters`);
+}
+
 export class NetworkError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
     super(message);
@@ -190,7 +198,8 @@ export class MokkanClient {
     return this.authed('GET', `/reminders?scope=${scope}`);
   }
 
-  push(text: string, dueAt?: Date | null, clientId?: string): Promise<ReminderResponse> {
+  async push(text: string, dueAt?: Date | null, clientId?: string): Promise<ReminderResponse> {
+    checkLength(text);
     const body: Record<string, unknown> = { text };
     if (dueAt) body.due_at = dueAt.toISOString();
     if (clientId !== undefined) body.client_id = clientId;
@@ -198,7 +207,8 @@ export class MokkanClient {
   }
 
   /** Changes text and/or due_at (null clears it). Every 3rd successful edit costs a credit. */
-  editReminder(id: string, patch: EditPatch, expectedVersion?: number): Promise<ReminderResponse> {
+  async editReminder(id: string, patch: EditPatch, expectedVersion?: number): Promise<ReminderResponse> {
+    if (patch.text !== undefined) checkLength(patch.text);
     const body: Record<string, unknown> = {};
     if (patch.text !== undefined) body.text = patch.text;
     if (patch.due_at !== undefined) body.due_at = patch.due_at === null ? null : patch.due_at.toISOString();

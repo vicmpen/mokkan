@@ -246,7 +246,7 @@ describe('fake PATCH /reminders/:id follows the contract', () => {
     await expect(client().editReminder(ID1, { text: 'x' })).rejects.toMatchObject({ status: 404, code: 'not_found' });
     await expect(client().editReminder(IDNEW, { text: 'x' })).rejects.toMatchObject({ status: 404, code: 'not_found' });
     await expect(client().editReminder(ID2, { text: '   ' })).rejects.toMatchObject({ status: 400, code: 'validation' });
-    await expect(client().editReminder(ID2, { text: 'x'.repeat(2001) })).rejects.toMatchObject({ status: 400 });
+    await expect(client().editReminder(ID2, { text: 'x'.repeat(201) })).rejects.toMatchObject({ status: 400, code: 'validation' });
     await expect(client().editReminder(ID2, { text: 'x' }, acct.version + 5)).rejects.toMatchObject({ status: 409, code: 'stale' });
     await client().editReminder(ID2, { text: '  trimmed  ' }, acct.version);
     expect(acct.reminders.get(ID2)?.text).toBe('trimmed');
