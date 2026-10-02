@@ -139,6 +139,7 @@ mokkan ack <id...> | all               acknowledge reminders you have seen
 mokkan done <id...> | undone <id...>   finish reminders anywhere on the list (like pop, by id) | reopen finished ones
 mokkan pending | done                  due and not yet shown | finished reminders
 mokkan balance | buy                   credits
+mokkan feedback <text>                 send feedback to the mokkan developer (free)
 mokkan ui                              full-screen view with keyboard actions (see below)
 ```
 

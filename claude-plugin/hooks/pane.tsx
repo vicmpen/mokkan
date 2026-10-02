@@ -289,6 +289,7 @@ const FIELD: Record<Extract<MokkanMode, { kind: 'input' }>['purpose'], { label: 
   in: { label: 'new reminder', hint: '2h call the bank · 1 credit, +1 held for the email', submit: 'schedule' },
   edit: { label: 'edit', hint: 'new text · every 3rd edit costs 1 credit', submit: 'save' },
   time: { label: 'due in', hint: '2h, or clear to make it a todo', submit: 'set' },
+  feedback: { label: 'feedback', hint: 'to the mokkan developer · free · shift+enter for a new line', submit: 'send' },
 }
 
 /** The help view (`h`): what mokkan is, the glyphs, the acts that are easy to mix up, and the costs. */
@@ -306,6 +307,7 @@ const HELP_TEXT = [
   '↑↓, Tab or a row\'s number select it: type 1 then 2 for row 12. ctrl+x tab gives the pane the keys; Esc gives them back.',
   'A todo costs 1 credit. A reminder costs 1, plus 1 held for its email and given back if you ack it first. Every 3rd edit costs 1; the rest is free.',
   'b opens Stripe Checkout to add credits. In a terminal, mokkan ui opens this full screen.',
+  'f sends feedback to the mokkan developer, free; shift+enter starts a new line.',
 ]
 
 /** `group`: the key hints start a new line before it, one line per kind of key. */
@@ -454,7 +456,7 @@ export const register: Register = on => {
     const toggleDone = (id: string, text: string, reopen: boolean, first?: () => Promise<unknown>) => reopen
       ? act($, 'reopening…', ['undone', id], `reopened · ${text}`, first)
       : act($, 'archiving…', ['done', id], `archived · ${text}`, first)
-    const field = async (purpose: 'push' | 'in' | 'edit' | 'time') => {
+    const field = async (purpose: 'push' | 'in' | 'edit' | 'time' | 'feedback') => {
       const needsOne = purpose === 'edit' || purpose === 'time'
       if (needsOne && (!current || current.state === 'done')) return needOne()
       const next: MokkanMode = { kind: 'input', purpose, targetId: current?.id, value: purpose === 'edit' ? current?.text ?? '' : '' }
@@ -518,6 +520,7 @@ export const register: Register = on => {
           ...(e.surface !== 'mobile' ? { buy: { label: 'buy', hotkey: 'b', run: () => buy() } } : {}),
           logout: { label: 'log out', hotkey: 'l', run: () => confirm('logout') },
           ...(list.length >= 10 ? { zero: { label: '10, 20…', hotkey: '0', run: () => typed(0) } } : {}),
+          feedback: { label: 'feedback', hotkey: 'f', needsField: true, run: () => field('feedback') },
           help: { label: 'help', hotkey: 'h', run: toggleHelp },
           close: { label: 'close', hotkey: 'q', run: () => $.ui.close({ id: PANE }) },
         }
@@ -623,6 +626,7 @@ export const register: Register = on => {
         m.purpose === 'push' ? ['adding…', ['push', text], tb === 'todos' ? `added · ${text}` : `added to TODOs · ${text}`]
         : m.purpose === 'in' ? ['scheduling…', ['in', dur, rest.join(' ')], `${tb === 'reminders' ? 'scheduled' : 'added to Reminders, due'} in ${dur} · ${rest.join(' ')}`]
         : m.purpose === 'edit' ? ['saving…', ['edit', id, text], `edited · ${text}`]
+        : m.purpose === 'feedback' ? ['sending…', ['feedback', text], 'feedback sent · thank you']
         : text === 'clear' ? ['setting due…', ['edit', id, '--clear-due'], `${was?.due_at === null ? 'now a todo' : 'moved to TODOs'} · ${target}`]
         : ['setting due…', ['edit', id, '--in', text], `${was?.due_at === null ? 'moved to Reminders, due' : 'due'} in ${text} · ${target}`]
       if (await act($, verbing, args, done)) await update($, mode, () => NORMAL)

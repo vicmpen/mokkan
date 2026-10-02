@@ -227,6 +227,22 @@ test('push and edit run the CLI; the field label is not its submit label', async
   await ui.unmount()
 })
 
+test('f sends feedback as one argument, line breaks kept, and free', async ($, on) => {
+  const { ran, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'feedback' })
+  const field = await ui.find({ key: 'field' })
+  expect(field?.props.label).toBe('feedback')
+  expect(field?.props.submitLabel).toBe('send')
+  expect(field?.props.placeholder).toMatch(/free · shift\+enter for a new line/)
+  await ui.input({ key: 'field', text: '  the pane is great\nbut f was missing  ' })
+  expect(ran.some(a => a[2] === 'feedback' && a[3] === 'the pane is great\nbut f was missing' && a.length === 5)).toBe(true)
+  expect(await status(ui)).toBe('feedback sent · thank you')
+  expect(await ui.find({ key: 'field' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('the pane opens on Reminders while one is due, else on TODOs; v cycles the tabs, each with its own empty state', async ($, on) => {
   const { session, clock } = fakeCli(on)
   session.stack = [row(A, 'renew the TLS cert', 'delivered', null), row(C, 'ask Maria re notes', 'scheduled', 40)]
@@ -484,22 +500,23 @@ test('the legend: every key in `mokkan ui` footer style, wrapped to the width; l
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
   const keys = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k && !k.startsWith('row-') && !k.startsWith('tab-'))
-  expect(await keys()).toEqual(['push', 'in', 'edit', 'time', 'done', 'ack', 'view', 'refresh', 'buy', 'logout', 'help', 'close'])
+  expect(await keys()).toEqual(['push', 'in', 'edit', 'time', 'done', 'ack', 'view', 'refresh', 'buy', 'logout', 'feedback', 'help', 'close'])
   const labels = async () => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey && !b.key?.startsWith('row-')).map(b => b.text)
-  expect(await labels()).toEqual(['todo', 'reminder', 'edit', 'when', 'archive', 'ack', 'view archived', 'sync', 'buy', 'log out', 'help', 'close'])
+  expect(await labels()).toEqual(['todo', 'reminder', 'edit', 'when', 'archive', 'ack', 'view archived', 'sync', 'buy', 'log out', 'feedback', 'help', 'close'])
   const hotkeys = async () => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey && !b.key?.startsWith('row-')).map(b => b.props.hotkey)
-  expect(await hotkeys()).toEqual(['t', 'r', 'e', 'w', 'd', 'a', 'v', 's', 'b', 'l', 'h', 'q']) // each its label's first letter
+  expect(await hotkeys()).toEqual(['t', 'r', 'e', 'w', 'd', 'a', 'v', 's', 'b', 'l', 'f', 'h', 'q']) // each its label's first letter
   await ui.press({ key: 'view' })
   expect(await labels()).toContain('reopen') // Archived names what d and v do there
   expect(await labels()).toContain('view todos')
   expect(await shows(ui, 'd archives the selected row.')).toBe(false) // the archive has a row
   await ui.press({ key: 'view' })
-  // A line per group (add, the selected row, the rest), the last wrapped: four lines at 44 columns, 42 inside the border.
+  // A line per group (add, the selected row, the rest), the last wrapped: five lines at 44 columns, 42 inside the border.
   const line = async (i: number) => (await ui.find({ key: `legend-${i}` }))?.text.replace(/\s+/g, ' ').trim()
   expect(await line(0)).toBe('todo · reminder')
   expect(await line(2)).toBe('view reminders · sync · buy')
-  expect(await line(3)).toBe('log out · help · close')
-  expect(await ui.find({ key: 'legend-4' })).toBeUndefined()
+  expect(await line(3)).toBe('log out · feedback · help')
+  expect(await line(4)).toBe('close')
+  expect(await ui.find({ key: 'legend-5' })).toBeUndefined()
 
   session.loggedIn = false
   await ui.press({ key: 'refresh' })

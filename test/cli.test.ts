@@ -430,6 +430,14 @@ describe('mokkan CLI', () => {
     expect(res.stdout).toBe('Heartbeat sent (codex); session active until 2026-09-28T12:05:00.000Z.\n');
   });
 
+  it('feedback posts the text, keeping its line breaks', async () => {
+    server.on('POST', '/feedback', () => ({ status: 201, body: { ok: true } }));
+    const res = await h.run(['feedback', 'first line\nsecond'], { serverUrl: server.url, loggedIn: true });
+    expect(server.last('POST', '/feedback')?.body).toEqual({ text: 'first line\nsecond' });
+    expect(res).toEqual({ code: 0, stdout: 'Feedback sent. Thank you.\n', stderr: '' });
+    expect((await h.run(['feedback', '  '], { serverUrl: server.url, loggedIn: true })).code).not.toBe(0);
+  });
+
   it('deliver marks the given reminders shown', async () => {
     server.on('POST', '/reminders/deliver', () => ({ status: 200, body: { version: 3, delivered: [r1.id] } }));
     const res = await h.run(['deliver', r1.id], { serverUrl: server.url, loggedIn: true });

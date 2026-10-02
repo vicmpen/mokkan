@@ -13,6 +13,7 @@ import { doneCommand, listCommand, pendingCommand } from './commands/list.js';
 import { ackCommand, deliverCommand, editCommand, inCommand, pushCommand, takeCommand, markDoneCommand } from './commands/mutate.js';
 import { balanceCommand, buyCommand, openUrlDetached } from './commands/billing.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
+import { feedbackCommand } from './commands/feedback.js';
 import { uiCommand } from './commands/ui.js';
 import { HOOK_BUDGET_MS, hookCommand, safeAppendHookLog } from './hooks.js';
 import { watchCommand } from './watcher.js';
@@ -146,6 +147,7 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan buy [--pack <key>] [--no-open]
                                   buy credits: prints (and opens) a Stripe Checkout link
   mokkan balance [--json]         credit balance and recent transactions
+  mokkan feedback <text>          send feedback to the mokkan developer (free)
   mokkan register [email]         create an account (--start | --complete --otp <code>)
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
@@ -323,6 +325,7 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
       case 'buy': return await buyCommand(ctx);
       case 'balance': return await balanceCommand(ctx);
       case 'heartbeat': return await heartbeatCommand(ctx);
+      case 'feedback': return await feedbackCommand(ctx, args);
       case 'watch': return await watchCommand(ctx);
       default:
         throw new UserError(`Unknown command "${command}".\n${USAGE}`);

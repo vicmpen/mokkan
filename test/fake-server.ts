@@ -178,6 +178,7 @@ export class FakeServer {
       ? { status: 409, body: { error: 'stale', message: 'Your view of the list is out of date', version: acct.version, reminders: active() } }
       : null;
     this.on('POST', '/heartbeat', () => ({ status: 200, body: { active_until: '2026-09-28T12:05:00.000Z' } }));
+    this.on('POST', '/feedback', () => ({ status: 201, body: { ok: true } }));
     this.on('GET', '/reminders/pending', () => ({ status: 200, body: {
       due: active().filter((r) => r.state === 'due'), awaiting_ack: active().filter((r) => r.state === 'delivered'),
     } }));

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Feedback.** `f` in the pane opens a feedback field (shift+enter for a new line) and `mokkan feedback <text>` sends it from a terminal or `/mokkan feedback …`. It is free, kept by the server and emailed to the developer (`FEEDBACK_EMAIL`), 10 an hour, up to 2000 characters. Needs a server with `POST /feedback`.
 - **Todos and reminders are capped at 200 characters.** The server refuses longer text on push and edit (400, was 2000), counted in code points after trimming, and the CLI, the pane and `mokkan ui` refuse it before sending. Existing longer items stay as they are until edited.
 
 ## 0.6.1

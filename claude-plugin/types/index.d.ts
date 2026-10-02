@@ -31,7 +31,7 @@ export type MokkanMessage = { text: string; tone: 'ok' | 'note' | 'error'; id: n
 /** What the pane's field is for: a new todo or reminder, or a change to the pointed one. */
 export type MokkanMode =
   | { kind: 'normal' }
-  | { kind: 'input'; purpose: 'push' | 'in' | 'edit' | 'time'; targetId?: string; value: string }
+  | { kind: 'input'; purpose: 'push' | 'in' | 'edit' | 'time' | 'feedback'; targetId?: string; value: string }
   /** `target` names what the action takes: a reminder's text, or the account; `targetId` the reminder done and undone change. */
   | { kind: 'confirm'; action: 'pop' | 'dequeue' | 'logout' | 'done' | 'undone'; target: string; targetId?: string }
   /**

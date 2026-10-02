@@ -223,6 +223,9 @@ export class MokkanClient {
 
   balance(): Promise<BalanceResponse> { return this.authed('GET', '/billing/balance'); }
 
+  /** Free; the server keeps line breaks, caps it at 2000 characters and takes 10 an hour. */
+  feedback(text: string): Promise<{ ok: true }> { return this.authed('POST', '/feedback', { text }); }
+
   pop(expectedVersion?: number): Promise<ReminderResponse> {
     return this.changing(this.authed('POST', '/reminders/pop', expectedVersion === undefined ? {} : { expected_version: expectedVersion }));
   }

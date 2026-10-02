@@ -204,6 +204,10 @@ var MokkanClient = class {
   balance() {
     return this.authed("GET", "/billing/balance");
   }
+  /** Free; the server keeps line breaks, caps it at 2000 characters and takes 10 an hour. */
+  feedback(text) {
+    return this.authed("POST", "/feedback", { text });
+  }
   pop(expectedVersion) {
     return this.changing(this.authed("POST", "/reminders/pop", expectedVersion === void 0 ? {} : { expected_version: expectedVersion }));
   }
@@ -951,6 +955,16 @@ async function heartbeatCommand(ctx) {
   ctx.io.stdout(ctx.json ? `${JSON.stringify(res)}
 ` : `Heartbeat sent (${source}); session active until ${res.active_until}.
 `);
+  return 0;
+}
+
+// src/commands/feedback.ts
+async function feedbackCommand(ctx, args) {
+  const text = args.join(" ").trim();
+  if (text === "") throw new UserError("Usage: mokkan feedback <text>");
+  const res = await ctx.client.feedback(text);
+  ctx.io.stdout(ctx.json ? `${JSON.stringify(res)}
+` : "Feedback sent. Thank you.\n");
   return 0;
 }
 
@@ -2532,6 +2546,7 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan buy [--pack <key>] [--no-open]
                                   buy credits: prints (and opens) a Stripe Checkout link
   mokkan balance [--json]         credit balance and recent transactions
+  mokkan feedback <text>          send feedback to the mokkan developer (free)
   mokkan register [email]         create an account (--start | --complete --otp <code>)
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
@@ -2729,6 +2744,8 @@ Logged out.
         return await balanceCommand(ctx);
       case "heartbeat":
         return await heartbeatCommand(ctx);
+      case "feedback":
+        return await feedbackCommand(ctx, args);
       case "watch":
         return await watchCommand(ctx);
       default:
