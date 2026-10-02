@@ -640,7 +640,8 @@ export const register: Register = on => {
               const [glyph, tone] = mark(r)
               // `▸ □ 1: text`, the time flush right; the selected row has the pointer and bold marks, as in `mokkan ui`.
               const text = fit(r.text, Math.max(4, width - lead - (time ? wide(time) + 2 : 0)))
-              const gap = Math.max(1, width - lead - wide(text) - wide(time))
+              // No gap when an untimed row's text fills the width: one more cell would wrap the row.
+              const gap = Math.max(time ? 1 : 0, width - lead - wide(text) - wide(time))
               return (
                 <Box key={r.id} flexDirection="column">
                   <Box>
@@ -651,7 +652,7 @@ export const register: Register = on => {
                     <Button key={`row-${r.id}`} plain hotkey={n <= 9 ? String(n) : undefined} dimColor={(r.state === 'acknowledged' || r.state === 'done') && !isSel} onPress={go(() => (n <= 9 ? typed(n) : press(r)))}>
                       {text}
                     </Button>
-                    <Text>{' '.repeat(gap)}</Text>
+                    {gap > 0 && <Text>{' '.repeat(gap)}</Text>}
                     {time && <Text bold={isSel} color={time.startsWith('overdue') ? 'red' : undefined} dimColor={!time.startsWith('overdue') && !isSel}>{time}</Text>}
                   </Box>
                   {isSel && detail(r, now, width - lead).map((line, j) => <Text key={`detail-${j}`} dimColor>{`${' '.repeat(lead)}${fit(line, width - lead)}`}</Text>)}

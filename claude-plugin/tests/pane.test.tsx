@@ -710,3 +710,16 @@ test('a key no Button binds, typed while the pane holds the keys, is dropped and
   expect(await type('f')).toEqual({ text: 'f', cursor: 1 })
   expect(opens).toEqual([])
 })
+
+test('a todo row as long as the pane, or longer, stays one line of the body width', async ($, on) => {
+  const { session, clock } = fakeCli(on)
+  const width = PANE.props.bodyColumns - 2 // the terminal's border takes two
+  session.stack = [row(A, 'x'.repeat(width - 7), 'delivered', null), row(C, 'y'.repeat(width * 2), 'delivered', null)]
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  for (const id of [A, C]) {
+    // `▸ ▎ 1: ` and the gap are the row's Texts, the label its Button's; the Button also draws `1: `.
+    const drawn = (await ui.find({ key: id }))!.text
+    expect([...drawn].length + 3).toBe(width)
+  }
+})
