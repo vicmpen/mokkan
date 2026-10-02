@@ -1,6 +1,6 @@
 <h1><img src="assets/banner.svg" width="960" alt="mokkan"></h1>
 
-**A Claude Code mod for reminders that follow you between agent sessions.** mokkan docks your reminder stack in a pane beside the Claude Code transcript, and the same list reaches every other session you open: Claude Code, Codex and any terminal, on any machine. Push a note in one session; it surfaces in the next one and stays there until you say you've seen it.
+**A [Claude Code mod](https://claude.dev/blog/getting-started-with-claude-code-mods/#four-habits-worth-keeping) for reminders that follow you between agent sessions.** mokkan docks your reminder stack in a pane beside the Claude Code transcript, and the same list reaches every other session you open: Claude Code, Codex and any terminal, on any machine. Push a note in one session; it surfaces in the next one and stays there until you say you've seen it.
 
 ```
 /plugin marketplace add vicmpen/mokkan
