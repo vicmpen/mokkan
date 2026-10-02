@@ -27,7 +27,7 @@ From a shell, run `claude plugin marketplace add vicmpen/mokkan`, then `claude p
 The plugin provides:
 - **`/mokkan:mokkan <command>`**, for example `/mokkan:mokkan push call the bank` or `/mokkan:mokkan list`. Claude can also invoke it when you ask it to remember something.
 - **Hooks**: reminders that are due appear when a session starts and after Claude replies.
-- **A live pane**, `/mokkan-pane`: your stack beside the transcript, with the same actions as `mokkan ui` (see below).
+- **A mod**: `/mokkan-pane` opens a pane with your stack beside the transcript, with the same actions as `mokkan ui` (see below).
 
 The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and hooks run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
 
@@ -86,9 +86,9 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 
 `mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
 
-## The pane in Claude Code
+## The mod: a pane in Claude Code
 
-`/mokkan-pane` opens a live view of your stack inside Claude Code. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) it docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
+The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan-pane` opens it. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
 
 Three tabs: **todo** (reminders without a due time), **reminders** (with one) and **done**. The arrows and Tab move a pointer through the rows; `1`–`9` jump to a row. Pressing the pointed row again (Enter, or its digit) marks it done, or reopens it on the done tab. The commands at the bottom have one key each:
 
@@ -102,7 +102,7 @@ Three tabs: **todo** (reminders without a due time), **reminders** (with one) an
 | `l` / `g` | log in / register, when logged out (the password is masked) |
 | `c` | close the pane |
 
-The pane runs the plugin's own copy of the CLI, refreshes every minute and after every action, and shows each result on the line above the commands. Reminders that come due while it is open are announced with a toast.
+The mod runs the plugin's own copy of the CLI, refreshes every minute and after every action, and shows each result on the line above the commands. Reminders that come due while the pane is open are announced with a toast. Mods are hooks and ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules` next to the shell hooks.
 
 ## Terminal UI
 
@@ -178,6 +178,7 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 - `src/` holds the `mokkan` CLI, written in TypeScript with no runtime dependencies.
 - `claude-plugin/` is the Claude Code plugin, and `.claude-plugin/marketplace.json` makes this repository its marketplace.
   - `hooks/` has the `SessionStart` and `Stop` hooks. They run the plugin's bundle first, then a dev checkout's `dist/cli.js`, then `mokkan` from PATH.
+  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It hooks `session.start`, `command.run`, `ui.render` and `ui.focus`, keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
   - `skills/mokkan/SKILL.md` is `/mokkan:mokkan`. It runs `node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs"` through `!` bash expansion (quoted, so a plugin path with spaces works; the `allowed-tools` rule carries the same quotes).
   - `scripts/mokkan.mjs` is the bundled CLI. It is committed because plugins are installed straight from git.
   - Check the plugin with `claude plugin validate .` and `claude plugin validate claude-plugin`.
