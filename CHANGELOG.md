@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.6.0 — unreleased
+## 0.6.1
+
+- **The selected row shows all of its text.** In the pane and `mokkan ui`, the selected row wraps its whole text under the text column, above its history line; the other rows stay cut to one line. In `mokkan ui` the list scrolls to keep the expanded row in view, and text taller than the list ends in `…`.
+
+## 0.6.0
 
 - **`/mokkan` toggles the pane.** `/mokkan-pane` is gone. `/mokkan` on its own opens the pane, or closes it when it is open; `/mokkan push milk` (any command) runs it and prints the output straight away, with no model turn. The menu lists it under the skill's full name, `/mokkan:mokkan`: the engine keeps the bare name for the skill, and the mod answers it. The user-level command from `install.sh` is now `/mokkan-cli` (`claude-command/mokkan-cli.md`), so it no longer hides the plugin's `/mokkan`; `install.sh` removes its old `~/.claude/commands/mokkan.md` link. `/mokkan:mokkan` stays as the skill Claude runs.
 - **No more session hooks.** The plugin's SessionStart and Stop hooks are gone: the pane polls every 15 seconds, toasts what comes due and tells the server a session is active, so nothing is put into the conversation any more.
