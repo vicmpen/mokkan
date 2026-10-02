@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.5.0 — unreleased
+
+- **Stray keys stay out of the prompt.** While the pane has the keyboard, a key it doesn't use does nothing; it used to leave the pane and land in Claude's prompt. ctrl/cmd combinations, pastes and typing after `Esc` reach the prompt as before.
+
+## 0.4.0
 
 - **The pane and `mokkan ui` share one layout.** One stack and a done view replace the todo / reminders / done tabs (and Active / All / Done in `mokkan ui`). Todos (`□`) and reminders (`◷ ● ○ ·`) look different; reminder times always say their direction (`in 40m`, `Wed 17:00`, `overdue 40m`, `2h ago`); the selected row shows its history. Keys match across both: `a` done, `k` acknowledge, `s` switch view (in `mokkan ui`, `a` used to acknowledge and `k`/`j` moved the selection; `K` now acknowledges all). Pop and dequeue name the reminder they will remove.
 - **The pane is more honest about its state.** Errors show in every mode, including inside a field, and the typed text is kept. A running command blocks repeat presses (no more double pops). Every row can be reached. Going offline keeps the last list, marked as stale. The pane is drawn like `mokkan ui`: the same header, `Stack │ Done` views, selected row marked by `▸` and bold, and key footer.
