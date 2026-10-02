@@ -1,6 +1,22 @@
-# mokkan
+<h1><img src="assets/banner.svg" width="960" alt="mokkan"></h1>
 
-Cross-session reminders for Claude Code, Codex and your terminal. Push a note from one session and it shows up in the next one, on any machine. Schedule a reminder and it comes back in a session, or by email if you are away.
+**A Claude Code mod for reminders that follow you between agent sessions.** mokkan docks your reminder stack in a pane beside the Claude Code transcript, and the same list reaches every other session you open: Claude Code, Codex and any terminal, on any machine. Push a note in one session; it surfaces in the next one and stays there until you say you've seen it.
+
+```
+/plugin marketplace add vicmpen/mokkan
+/plugin install mokkan@mokkan
+```
+
+Then `/mokkan-pane` opens the pane. New to mods? Read [Getting started with Claude Code mods](https://claude.dev/blog/getting-started-with-claude-code-mods/).
+
+## One push. Every session.
+
+The server (`https://api.mokkan.dev`) keeps the only copy of your list. Each session asks it what's due through hooks, not the model remembering to check, so a note pushed on your laptop shows up on your desktop within a turn or two:
+
+- **The pane** lists it on its next refresh, and a scheduled reminder that comes due while it's open arrives as a toast.
+- **Claude Code** shows it when a session starts (SessionStart hook) and after Claude's next reply (Stop hook).
+- **Codex** checks at the start and end of every task, through the mokkan skill.
+- **Any terminal** has the same list: `mokkan` prints it, `mokkan ui` opens it full-screen.
 
 ```
 mokkan push "check the flaky login test"
@@ -9,7 +25,38 @@ mokkan                      # the list, top of the stack first
 mokkan pop                  # remove the top one (dequeue removes the oldest)
 ```
 
-Your reminders are stored on the mokkan server (`https://api.mokkan.dev`), so every session and machine you log in from sees the same list.
+Acknowledge once, from any session, and every session knows. A pop is a single atomic step on the server, so two sessions can never take the same item, and a popped item moves to `done` instead of disappearing.
+
+## Nothing closes until you say so.
+
+Showing a reminder doesn't mean you saw it. mokkan keeps it lit until you acknowledge it, and a scheduled reminder that nobody acknowledges, or that comes due while no session is open, is emailed to you. If it has to choose, it would rather tell you twice than not at all.
+
+| State | What it means |
+|---|---|
+| scheduled | `mokkan in 1h30m …` waits on the server, off the list, until its time comes. |
+| due | On the list and unseen. The next hook in any session picks it up. With no session open, it goes out by email. |
+| delivered | Shown in a session. It keeps asking for an ack, and if one doesn't come, the email goes out anyway. |
+| acknowledged | You've seen it. It stays on the stack until you pop, dequeue or finish it. |
+
+## The mod: a pane in Claude Code
+
+The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan-pane` opens it. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
+
+It is laid out like `mokkan ui`: the header with your credits and sync state, `Stack │ Done` (switched with `s`), the list, the last result and the keys. One stack and a done view. The stack holds todos (`□`, no due time) and reminders (`◷` scheduled, `●` due, `○` shown, `·` acknowledged) in stack order. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets a line with its history (`todo · pushed 3h ago · seen 1h ago`). `1`–`9` or a click selects a row, marked with `▸` and bold (no highlight); selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to act` in place of the commands:
+
+| Key | Action |
+|---|---|
+| `p` / `i` | add a todo / schedule a reminder (`2h text`) |
+| `e` / `t` | edit the selected one's text / its due time (`2h`, or `clear`) |
+| `a` / `k` | mark it done (or reopen it in the done view) / acknowledge it |
+| `s` | switch between the stack and done |
+| `x` / `d` | pop the top / dequeue the bottom |
+| `o` / `r` / `c` | log out / refresh / close the pane |
+| `l` / `g` | log in / register, when logged out (the password is masked) |
+
+Pop, dequeue and log out ask first and name what they act on: `pop "call the bank"?`. While a command runs, the header names it (`popping…`) and other keys wait. The line above the commands shows each result, with errors starting `error:`, and clears itself after 15 seconds. When the server can't be reached the pane keeps the last list and marks it `offline · 3m old`.
+
+The mod runs the plugin's own copy of the CLI, refreshes every minute while it is open and after every action. Reminders with a due time that come due while the pane is open are announced with a toast. Mods are hooks and ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules` next to the shell hooks.
 
 ## Install
 
@@ -86,43 +133,26 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 
 `mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
 
-## The mod: a pane in Claude Code
-
-The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan-pane` opens it. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
-
-Three tabs: **todo** (reminders without a due time), **reminders** (with one) and **done**. The arrows and Tab move a pointer through the rows; `1`–`9` jump to a row. Pressing the pointed row again (Enter, or its digit) marks it done, or reopens it on the done tab. The commands at the bottom have one key each:
-
-| Key | Action |
-|---|---|
-| `p` / `i` | push a note / schedule one (`2h text`) |
-| `e` / `t` | edit the pointed reminder's text / its due time (`2h`, or `clear`) |
-| `a` / `k` | mark the pointed reminder done (or reopen it) / acknowledge it |
-| `x` / `d` | pop the top / dequeue the bottom, after a `y`/`n` confirmation |
-| `s` / `r` | switch tab / refresh |
-| `l` / `g` | log in / register, when logged out (the password is masked) |
-| `c` | close the pane |
-
-The mod runs the plugin's own copy of the CLI, refreshes every minute and after every action, and shows each result on the line above the commands. Reminders that come due while the pane is open are announced with a toast. Mods are hooks and ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules` next to the shell hooks.
-
 ## Terminal UI
 
-`mokkan ui` opens a full-screen view of your stack in the terminal: the list with each reminder's state and due time, your credit balance, and key hints. It refreshes every 10 seconds and after every action.
+`mokkan ui` opens a full-screen view of your stack in the terminal: one stack of every open reminder (scheduled ones included) and a done view, your credit balance, and key hints. Todos (pushed, no due time) show `□`; reminders with a due time show `◷` scheduled, `●` due (yellow), `○` shown, `·` acknowledged, with the time on the right (`in 40m`, `17:00`, `Wed 17:00`, `12 Oct`, `overdue 40m` in red, `40m ago`). The selected row has a detail line under it (`todo · pushed 3h ago · seen 1h ago`). It refreshes every 10 seconds and after every action.
 
 | Key | Action |
 |---|---|
-| `↑` `↓` (or `k` `j`), `Home`, `End` | move the selection |
-| `p` | push: type the text, `Enter` sends it (1 credit) |
-| `i` | schedule: `2h call the bank`, the first word is a duration |
-| `e` | edit the selected reminder's text (one edit) |
-| `t` | change its due time: a duration, or `clear` (one edit) |
-| `a` / `A` | acknowledge the selected reminder / all |
-| `x` / `d` | pop the top / dequeue the bottom, after a `y/n` confirmation |
-| `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
-| `Tab` | switch between Active, All (adds scheduled) and Done |
+| `↑` `↓`, `Home`, `End`, `1`–`9` | move the selection (selecting never changes anything) |
+| `p` | push a todo: type the text, `Enter` sends it (1 credit) |
+| `i` | schedule a reminder: `2h call the bank`, the first word is a duration |
+| `e` | edit the selected one's text (every 3rd edit costs 1 credit) |
+| `t` | change its due time: a duration, or `clear` (turns a todo into a reminder and back) |
+| `a` | mark the selected one done; in the done view, reopen it |
+| `k` / `K` | acknowledge the selected one / all |
+| `s`, `Tab` | switch between the stack and the done view |
+| `x` / `d` | pop the top / dequeue the bottom, after a confirmation that names the reminder |
 | `r` | refresh now |
+| `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
 | `q`, `Ctrl-C` | quit |
 
-Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` stays a terminal command. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
+Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `k`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
 ## Credits and pricing
 
@@ -153,6 +183,12 @@ If you set up the status line that 0.2.0 offered, remove it first, because it ru
 - Payments go through Stripe Checkout. mokkan never sees your card details.
 - On your machine, mokkan keeps your login tokens in `~/.config/mokkan/credentials.json` (mode 0600). Hook errors are logged to `hook.log` in the same directory.
 - `MOKKAN_SERVER_URL` points the CLI at a different server.
+
+## Why "mokkan"
+
+[*Mokkan*](https://en.wikipedia.org/wiki/Mokkan) (木簡) are the thin wooden slips that clerks in 7th- and 8th-century Japan used for notes, labels and records. When a slip had done its job, they shaved the surface clean and wrote the next note on the same wood.
+
+The terminal has kept that habit for fifty years: small plain-text tools that do one job and stay out of the way. mokkan is a slip for the age of agents. One line of text, an id in square brackets, and gone when you're done with it.
 
 ## Support
 
