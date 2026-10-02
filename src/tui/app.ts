@@ -10,11 +10,10 @@ import type { Key } from './keys.js';
 import { render as renderScreen } from './screen.js';
 import {
   initialState, rowsOf, emptyLogin, ACTIVE_STATES, CHROME_ROWS, MAX_INPUT_CODE_POINTS,
-  type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tab, type Tone, type TuiState,
+  type ConfirmMode, type InputMode, type InputPurpose, type Size, type Tone, type TuiState,
 } from './state.js';
 
 export const REFRESH_INTERVAL_MS = 10_000;
-const TABS: Tab[] = ['active', 'all', 'done'];
 
 export interface TuiAppOptions {
   client: MokkanClient;
@@ -116,28 +115,30 @@ export class TuiApp {
   private normalKey(key: Key): Promise<void> {
     const ch = key.name === 'char' ? key.ch : '';
     if (ch === 'q' || key.name === 'ctrl-c') return this.quit();
-    if (key.name === 'up' || ch === 'k') return this.move(-1);
-    if (key.name === 'down' || ch === 'j') return this.move(1);
+    if (key.name === 'up') return this.move(-1);
+    if (key.name === 'down') return this.move(1);
     if (key.name === 'home') return this.move(-Infinity);
     if (key.name === 'end') return this.move(Infinity);
-    if (key.name === 'tab') return this.nextTab();
+    if (ch >= '1' && ch <= '9') return this.jump(Number(ch) - 1);
+    if (key.name === 'tab' || ch === 's') return this.switchView();
     if (ch === 'r') return this.refresh();
-    if (ch === 'p') return this.startInput('push', 'push', 'Enter to push (1 credit) · Esc to cancel');
-    if (ch === 'i') return this.startInput('in', 'in', '<duration> <text>, e.g. 2h call the bank · Enter to schedule · Esc to cancel');
+    if (ch === 'p') return this.startInput('push', 'todo', 'text (1 credit) · Enter to push · Esc to cancel');
+    if (ch === 'i') return this.startInput('in', 'remind', '2h call the bank (1 credit + 1 reserved) · Enter to schedule · Esc to cancel');
     if (ch === 'e') {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
       // Control characters from the server never reach the input line; Enter without changes stays "Unchanged."
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (counts as one edit) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
+      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (every 3rd edit costs 1) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
     if (ch === 't') {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" · Enter to save (counts as one edit) · Esc to cancel', { targetId: r.id, version: this.state.version });
+      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d or clear · Enter to save (every 3rd edit costs 1) · Esc to cancel', { targetId: r.id, version: this.state.version });
     }
-    if (ch === 'a') return this.ackSelected();
-    if (ch === 'A') return this.ackAll();
+    if (ch === 'a') return this.toggleDone();
+    if (ch === 'k') return this.ackSelected();
+    if (ch === 'K') return this.ackAll();
     if (ch === 'x') return this.startConfirm('pop');
     if (ch === 'd') return this.startConfirm('dequeue');
     if (ch === 'b') return this.buy();
@@ -224,9 +225,18 @@ export class TuiApp {
     return Promise.resolve();
   }
 
-  private nextTab(): Promise<void> {
+  /** Digits select a row of the current view; one that is not there is ignored. */
+  private jump(index: number): Promise<void> {
+    if (index >= this.rows().length) return Promise.resolve();
+    this.state.selected = index;
+    this.clampSelection();
+    this.changed();
+    return Promise.resolve();
+  }
+
+  private switchView(): Promise<void> {
     const s = this.state;
-    s.tab = TABS[(TABS.indexOf(s.tab) + 1) % TABS.length];
+    s.tab = s.tab === 'stack' ? 'done' : 'stack';
     s.selected = 0;
     s.scroll = 0;
     this.changed();
@@ -242,10 +252,13 @@ export class TuiApp {
     return this.state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
   }
 
-  /** The selected reminder for e, t and a; sets the message and returns null when there is none to change. */
-  private selectedReminder(): Reminder | null {
+  /**
+   * The selected reminder for e, t, k (and, with `inDone`, a); sets the message and returns null when there is none
+   * to change.
+   */
+  private selectedReminder(inDone = false): Reminder | null {
     const s = this.state;
-    if (s.tab === 'done') { this.say('Switch to Active or All to change reminders.', 'yellow'); return null; }
+    if (s.tab === 'done' && !inDone) { this.say('Press s for the stack to change reminders.', 'yellow'); return null; }
     const r = this.rows()[s.selected];
     if (!r) { this.say('Nothing selected.', 'yellow'); return null; }
     return r;
@@ -354,7 +367,7 @@ export class TuiApp {
   private startConfirm(action: 'pop' | 'dequeue'): Promise<void> {
     const list = this.activeRows();
     const target = action === 'pop' ? list[0] : list[list.length - 1];
-    if (!target) { this.say('List is empty.'); return Promise.resolve(); }
+    if (!target) { this.say('The stack is empty.'); return Promise.resolve(); }
     this.state.message = null;
     this.state.mode = { kind: 'confirm', action, text: target.text, version: this.state.version };
     this.changed();
@@ -368,6 +381,18 @@ export class TuiApp {
     return this.action(async () => {
       const res = mode.action === 'pop' ? await this.client.pop(version) : await this.client.dequeue(version);
       this.say(`${mode.action === 'pop' ? 'Popped' : 'Dequeued'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+    });
+  }
+
+  /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
+  private toggleDone(): Promise<void> {
+    const r = this.selectedReminder(true);
+    if (!r) return Promise.resolve();
+    const done = this.state.tab !== 'done';
+    const version = this.state.version ?? undefined;
+    return this.action(async () => {
+      const res = await this.client.setDone(r.id, done, version);
+      this.say(`${done ? 'Done' : 'Reopened'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
     });
   }
 
@@ -449,7 +474,7 @@ export class TuiApp {
         this.client.list('all'),
         this.client.me().catch(() => null),
         this.client.heartbeat('ui').catch(() => null),
-        s.tab === 'done' ? this.client.list('done') : null,
+        s.tab === 'done' || s.done !== null ? this.client.list('done') : null,
       ]);
       // Delivery changes the list and its version, and another session may have changed it since: list again.
       const list = await this.deliverDue(first.reminders) ? await this.client.list('all') : first;
@@ -477,7 +502,7 @@ export class TuiApp {
 
   /**
    * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
-   * `mokkan watch` do. Not on the Done tab, which does not show them. Returns whether the server took the call.
+   * `mokkan watch` do. Not in the done view, which does not show them. Returns whether the server took the call.
    */
   private async deliverDue(reminders: Reminder[]): Promise<boolean> {
     if (this.state.tab === 'done') return false;
@@ -525,7 +550,7 @@ export class TuiApp {
         this.say('This reminder was already shown or emailed, so its time can no longer be changed.', 'red');
         return;
       }
-      if (err.status === 404 && err.code === 'empty') { this.say('List is empty.'); return; }
+      if (err.status === 404 && err.code === 'empty') { this.say('The stack is empty.'); return; }
       const hint = apiErrorHint(err);
       let text = hint ? `${err.message} ${hint}` : err.message;
       if (err.status === 402 && err.code === 'insufficient_credits' && !text.includes('mokkan buy')) text += ' Run: mokkan buy';

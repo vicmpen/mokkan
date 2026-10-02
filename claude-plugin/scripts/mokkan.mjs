@@ -941,8 +941,6 @@ async function heartbeatCommand(ctx) {
 
 // src/text.ts
 var MAX_TEXT = 40;
-var LOW_CREDITS = 20;
-var DEFAULT_GRACE_MINUTES = 15;
 function cleanText(text, max = MAX_TEXT) {
   const flat = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
@@ -954,21 +952,9 @@ function formatAge(ms) {
   if (s >= 60) return `${Math.floor(s / 60)}m`;
   return `${s}s`;
 }
-function formatWhen(at, now, timeZone) {
-  const day = (d) => d.toLocaleDateString("en-CA", { timeZone });
-  const time = at.toLocaleTimeString("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false });
-  if (day(at) === day(now)) return time;
-  const prefix = at.getTime() - now.getTime() < 6 * 864e5 ? at.toLocaleDateString("en-US", { timeZone, weekday: "short" }) : at.toLocaleDateString("en-US", { timeZone, month: "short", day: "numeric" });
-  return `${prefix} ${time}`;
-}
-function creditSegments(balance) {
-  if (typeof balance !== "number" || !Number.isFinite(balance)) return [];
-  if (balance >= LOW_CREDITS) return [{ text: ` \xB7 ${balance} cr`, tone: "dim", keep: true }];
-  return [{ text: ` \xB7 \u26A0 ${balance} cr \u2014 mokkan buy`, tone: balance <= 0 ? "red" : "yellow", keep: true }];
-}
 
 // src/tui/state.ts
-var CHROME_ROWS = 6;
+var CHROME_ROWS = 7;
 var MAX_INPUT_CODE_POINTS = 2e3;
 var ACTIVE_STATES = /* @__PURE__ */ new Set(["due", "delivered", "acknowledged"]);
 function emptyLogin() {
@@ -978,7 +964,7 @@ function initialState(email, host) {
   return {
     screen: email === null ? "login" : "dashboard",
     login: emptyLogin(),
-    tab: "active",
+    tab: "stack",
     reminders: [],
     done: null,
     version: null,
@@ -995,9 +981,7 @@ function initialState(email, host) {
   };
 }
 function rowsOf(state) {
-  if (state.tab === "done") return state.done ?? [];
-  if (state.tab === "all") return state.reminders;
-  return state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
+  return state.tab === "done" ? state.done ?? [] : state.reminders;
 }
 
 // src/tui/text.ts
@@ -1101,12 +1085,11 @@ function padStart(text, width) {
 var MIN_COLUMNS = 20;
 var MIN_ROWS = 8;
 var MIN_TEXT_COLUMNS = 10;
-var ROW_PREFIX_COLUMNS = 1 + 3 + 2 + 12 + 1;
 var TIME_GAP_COLUMNS = 2;
-var GRACE_MS = DEFAULT_GRACE_MINUTES * 6e4;
+var LOW_CREDITS = 10;
 var HEADER_LEFT_MIN = 24;
 var LOGIN_FIELD_COLUMN = 13;
-var SGR = { red: "31", yellow: "33", green: "32", dim: "2", plain: "", bold: "1", reverse: "7" };
+var SGR = { red: "31", yellow: "33", green: "32", dim: "2", plain: "", bold: "1" };
 function paint(text, ...styles) {
   const codes = styles.map((s) => SGR[s]).filter((c) => c !== "");
   return codes.length === 0 || text === "" ? text : `\x1B[${codes.join(";")}m${text}\x1B[0m`;
@@ -1186,44 +1169,47 @@ function dashboardLines(state, size, now) {
   const out = [header(state, columns, now), tabs(state, columns), "\u2500".repeat(columns)];
   const listRows = rows - CHROME_ROWS;
   const items = rowsOf(state);
+  const list = [];
   if (items.length === 0) {
-    const empty = state.tab === "done" ? "Nothing done yet." : "No reminders. Press p to push one.";
-    out.push(line([part(` ${empty}`, "dim")], [], columns));
-    for (let i = 1; i < listRows; i++) out.push("");
+    const empty = state.tab === "done" ? "Nothing finished yet." : "Nothing on the stack. p adds a todo, i a reminder.";
+    list.push(line([part(` ${empty}`, "dim")], [], columns));
   } else {
-    for (let i = 0; i < listRows; i++) {
-      const idx = state.scroll + i;
-      out.push(idx < items.length ? row(items[idx], idx, idx === state.selected, columns, now) : "");
+    const numberWidth = String(items.length).length;
+    for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
+      const selected = idx === state.selected;
+      list.push(row(items[idx], idx, numberWidth, selected, columns, now));
+      if (selected) list.push(line([part(" ".repeat(rowPrefixWidth(numberWidth))), part(detail(items[idx], now), "dim")], [], columns));
     }
   }
-  out.push(state.message ? line([part(` ${clean(state.message.text)}`, state.message.tone)], [], columns) : "");
+  while (list.length < listRows + 1) list.push("");
+  out.push(...list);
+  const m = state.message;
+  out.push(m ? line([part(` ${m.tone === "red" ? "error: " : ""}${clean(m.text)}`, m.tone)], [], columns) : "");
   out.push(...footer(state, columns));
   return out;
 }
 function header(state, columns, now) {
   const left = [part(" mokkan", "bold"), part(` \xB7 ${clean(state.email)}`)];
-  for (const seg of creditSegments(state.credits)) left.push(part(seg.text, seg.tone));
+  const c = state.credits;
+  if (typeof c === "number" && Number.isFinite(c)) {
+    left.push(c <= 0 ? part(` \xB7 ${c} credits \xB7 buy`, "red") : c < LOW_CREDITS ? part(` \xB7 ${c} credits \xB7 low`, "yellow") : part(` \xB7 ${c} credits`, "dim"));
+  }
   left.push(part(` \xB7 ${state.host}`));
   return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
 }
 function status(state, now, maxWidth) {
   const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
-  if (state.refreshing) return part("refreshing\u2026", "dim");
+  if (state.refreshing) return part("syncing\u2026", "dim");
   if (state.error) {
-    const suffix = age ? ` \xB7 data ${age} old` : "";
-    if (state.error.kind === "offline") return part(`offline${suffix}`, "red");
+    const suffix = age ? ` \xB7 ${age} old` : "";
+    if (state.error.kind === "offline") return part(`offline${suffix}`, "yellow");
     const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth("error: ") - displayWidth(suffix)));
     return part(`error: ${msg}${suffix}`, "red");
   }
-  return part(age ? `refreshed ${age} ago` : "loading\u2026", "dim");
+  return part(age ? `synced ${age}` : "loading\u2026", "dim");
 }
 function tabs(state, columns) {
-  const active = state.reminders.filter((r) => ACTIVE_STATES.has(r.state)).length;
-  const labels = [
-    ["active", `Active ${active}`],
-    ["all", `All ${state.reminders.length}`],
-    ["done", state.done ? `Done ${state.done.length}` : "Done"]
-  ];
+  const labels = [["stack", `Stack ${state.reminders.length}`], ["done", state.done ? `Done ${state.done.length}` : "Done"]];
   const parts = [part(" ")];
   labels.forEach(([tab, label], i) => {
     if (i > 0) parts.push(part(" \u2502 ", "dim"));
@@ -1231,33 +1217,48 @@ function tabs(state, columns) {
   });
   return line(parts, [], columns);
 }
-function timing(r, now) {
-  const t = now.getTime();
-  const due = r.due_at ? Date.parse(r.due_at) : NaN;
-  const isDue = r.state === "due" || r.state === "scheduled" && due <= t;
-  if (isDue) {
-    if (Number.isNaN(due)) return { when: "", tone: "yellow" };
-    if (t - due > GRACE_MS) return { when: `overdue ${formatAge(t - due)}`, tone: "red" };
-    return { when: `due ${formatWhen(new Date(due), now)}`, tone: "yellow" };
-  }
-  if (r.state === "scheduled") return { when: `@ ${formatWhen(new Date(due), now)}`, tone: "dim" };
-  if (r.state === "done") return { when: r.done_at ? `done ${formatWhen(new Date(r.done_at), now)}` : "", tone: "dim" };
-  const when = Number.isNaN(due) ? "" : `due ${formatWhen(new Date(due), now)}`;
-  return { when, tone: r.state === "delivered" ? "plain" : "dim" };
+var isTodo = (r) => r.due_at === null;
+function glyph(r, now) {
+  if (r.state === "done") return part("\u2713", "dim");
+  if (isTodo(r)) return part("\u25A1", r.state === "acknowledged" ? "dim" : "plain");
+  if (r.state === "due" || r.state === "scheduled" && Date.parse(r.due_at) <= now.getTime()) return part("\u25CF", "yellow");
+  if (r.state === "scheduled") return part("\u25F7", "dim");
+  if (r.state === "delivered") return part("\u25CB");
+  return part("\xB7", "dim");
 }
-function row(r, index, selected, columns, now) {
-  const { when, tone } = timing(r, now);
-  const left = [
-    part(`${selected ? "\u25B8" : " "}${padStart(String(index + 1), 3)}  `),
-    part(padEnd(clean(r.state), 12), tone),
-    part(` ${clean(r.text)}`)
-  ];
-  const right = when === "" ? [] : [part(when, tone)];
-  return line(left, right, columns, {
-    minLeft: ROW_PREFIX_COLUMNS + MIN_TEXT_COLUMNS,
+function formatAhead(at, now) {
+  const time = at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (at.toDateString() === now.toDateString()) return time;
+  if (at.getTime() - now.getTime() < 7 * 864e5) return `${at.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+  return at.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+function timing(r, now) {
+  if (isTodo(r)) return null;
+  const due = Date.parse(r.due_at);
+  if (Number.isNaN(due)) return null;
+  const t = now.getTime();
+  if (due > t) return part(due - t < 36e5 ? `in ${formatAge(due - t)}` : formatAhead(new Date(due), now), "dim");
+  if (r.state === "due" || r.state === "scheduled") return part(`overdue ${formatAge(t - due)}`, "red");
+  return part(`${formatAge(t - due)} ago`, "dim");
+}
+var rowPrefixWidth = (numberWidth) => 4 + numberWidth + 2;
+function row(r, index, numberWidth, selected, columns, now) {
+  const when = timing(r, now);
+  const left = [part(`${selected ? "\u25B8" : " "} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${clean(r.text)}`)];
+  return line(left, when ? [when] : [], columns, {
+    minLeft: rowPrefixWidth(numberWidth) + MIN_TEXT_COLUMNS,
     minGap: TIME_GAP_COLUMNS,
-    rowStyle: selected ? "reverse" : void 0
+    rowStyle: selected ? "bold" : void 0
   });
+}
+function detail(r, now) {
+  const ago = (at) => `${formatAge(now.getTime() - Date.parse(at))} ago`;
+  const pushed = `pushed ${ago(r.created_at)}`;
+  if (r.state === "done") return r.done_at ? `done ${ago(r.done_at)} \xB7 ${pushed}` : `done \xB7 ${pushed}`;
+  const parts = [isTodo(r) ? "todo" : "reminder", pushed];
+  if (r.delivered_at) parts.push(`seen ${ago(r.delivered_at)}`);
+  if (r.acknowledged_at) parts.push("acked");
+  return parts.join(" \xB7 ");
 }
 function footer(state, columns) {
   const m = state.mode;
@@ -1267,13 +1268,12 @@ function footer(state, columns) {
     return [line([part(label, "bold"), part(text)], [], columns), line([part(` ${m.hint}`, "dim")], [], columns)];
   }
   if (m.kind === "confirm") {
-    const verb = m.action === "pop" ? "Pop" : "Dequeue";
-    const room = columns - displayWidth(` ${verb} ""? y/n`);
-    return [line([part(` ${verb} "${fit(clean(m.text), room)}"? y/n`, "yellow")], [], columns), ""];
+    const room = columns - displayWidth(` ${m.action} ""?  y: yes  n: no`);
+    return [line([part(` ${m.action} "${fit(clean(m.text), room)}"?  y: yes  n: no`, "yellow")], [], columns), ""];
   }
   return [
-    line([part(" p push \xB7 i schedule \xB7 e edit \xB7 t time \xB7 a ack \xB7 A ack all", "dim")], [], columns),
-    line([part(" x pop \xB7 d dequeue \xB7 b buy \xB7 Tab view \xB7 r refresh \xB7 q quit \xB7 \u2191\u2193 move", "dim")], [], columns)
+    line([part(" p todo \xB7 i remind \xB7 e edit \xB7 t time \xB7 a done \xB7 k ack \xB7 s view", "dim")], [], columns),
+    line([part(" x pop \xB7 d dequeue \xB7 K ack all \xB7 r refresh \xB7 b buy \xB7 q quit \xB7 \u2191\u2193 1-9 move", "dim")], [], columns)
   ];
 }
 function loginLines(state, size) {
@@ -1300,7 +1300,6 @@ function loginLines(state, size) {
 
 // src/tui/app.ts
 var REFRESH_INTERVAL_MS = 1e4;
-var TABS = ["active", "all", "done"];
 function errorText(err) {
   return err instanceof Error ? err.message : String(err);
 }
@@ -1404,27 +1403,29 @@ var TuiApp = class {
   normalKey(key) {
     const ch = key.name === "char" ? key.ch : "";
     if (ch === "q" || key.name === "ctrl-c") return this.quit();
-    if (key.name === "up" || ch === "k") return this.move(-1);
-    if (key.name === "down" || ch === "j") return this.move(1);
+    if (key.name === "up") return this.move(-1);
+    if (key.name === "down") return this.move(1);
     if (key.name === "home") return this.move(-Infinity);
     if (key.name === "end") return this.move(Infinity);
-    if (key.name === "tab") return this.nextTab();
+    if (ch >= "1" && ch <= "9") return this.jump(Number(ch) - 1);
+    if (key.name === "tab" || ch === "s") return this.switchView();
     if (ch === "r") return this.refresh();
-    if (ch === "p") return this.startInput("push", "push", "Enter to push (1 credit) \xB7 Esc to cancel");
-    if (ch === "i") return this.startInput("in", "in", "<duration> <text>, e.g. 2h call the bank \xB7 Enter to schedule \xB7 Esc to cancel");
+    if (ch === "p") return this.startInput("push", "todo", "text (1 credit) \xB7 Enter to push \xB7 Esc to cancel");
+    if (ch === "i") return this.startInput("in", "remind", "2h call the bank (1 credit + 1 reserved) \xB7 Enter to schedule \xB7 Esc to cancel");
     if (ch === "e") {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (counts as one edit) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
+      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (every 3rd edit costs 1) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
     if (ch === "t") {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput("time", `time [${shortId(r.id)}]`, '30m, 2h, 1d, 1h30m, or "clear" \xB7 Enter to save (counts as one edit) \xB7 Esc to cancel', { targetId: r.id, version: this.state.version });
+      return this.startInput("time", `time [${shortId(r.id)}]`, "30m, 2h, 1d or clear \xB7 Enter to save (every 3rd edit costs 1) \xB7 Esc to cancel", { targetId: r.id, version: this.state.version });
     }
-    if (ch === "a") return this.ackSelected();
-    if (ch === "A") return this.ackAll();
+    if (ch === "a") return this.toggleDone();
+    if (ch === "k") return this.ackSelected();
+    if (ch === "K") return this.ackAll();
     if (ch === "x") return this.startConfirm("pop");
     if (ch === "d") return this.startConfirm("dequeue");
     if (ch === "b") return this.buy();
@@ -1508,9 +1509,17 @@ var TuiApp = class {
     this.changed();
     return Promise.resolve();
   }
-  nextTab() {
+  /** Digits select a row of the current view; one that is not there is ignored. */
+  jump(index) {
+    if (index >= this.rows().length) return Promise.resolve();
+    this.state.selected = index;
+    this.clampSelection();
+    this.changed();
+    return Promise.resolve();
+  }
+  switchView() {
     const s = this.state;
-    s.tab = TABS[(TABS.indexOf(s.tab) + 1) % TABS.length];
+    s.tab = s.tab === "stack" ? "done" : "stack";
     s.selected = 0;
     s.scroll = 0;
     this.changed();
@@ -1524,11 +1533,14 @@ var TuiApp = class {
   activeRows() {
     return this.state.reminders.filter((r) => ACTIVE_STATES.has(r.state));
   }
-  /** The selected reminder for e, t and a; sets the message and returns null when there is none to change. */
-  selectedReminder() {
+  /**
+   * The selected reminder for e, t, k (and, with `inDone`, a); sets the message and returns null when there is none
+   * to change.
+   */
+  selectedReminder(inDone = false) {
     const s = this.state;
-    if (s.tab === "done") {
-      this.say("Switch to Active or All to change reminders.", "yellow");
+    if (s.tab === "done" && !inDone) {
+      this.say("Press s for the stack to change reminders.", "yellow");
       return null;
     }
     const r = this.rows()[s.selected];
@@ -1657,7 +1669,7 @@ var TuiApp = class {
     const list = this.activeRows();
     const target = action === "pop" ? list[0] : list[list.length - 1];
     if (!target) {
-      this.say("List is empty.");
+      this.say("The stack is empty.");
       return Promise.resolve();
     }
     this.state.message = null;
@@ -1676,6 +1688,17 @@ var TuiApp = class {
     return this.action(async () => {
       const res = mode.action === "pop" ? await this.client.pop(version) : await this.client.dequeue(version);
       this.say(`${mode.action === "pop" ? "Popped" : "Dequeued"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+    });
+  }
+  /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
+  toggleDone() {
+    const r = this.selectedReminder(true);
+    if (!r) return Promise.resolve();
+    const done = this.state.tab !== "done";
+    const version = this.state.version ?? void 0;
+    return this.action(async () => {
+      const res = await this.client.setDone(r.id, done, version);
+      this.say(`${done ? "Done" : "Reopened"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
     });
   }
   ackSelected() {
@@ -1756,7 +1779,7 @@ var TuiApp = class {
         this.client.list("all"),
         this.client.me().catch(() => null),
         this.client.heartbeat("ui").catch(() => null),
-        s.tab === "done" ? this.client.list("done") : null
+        s.tab === "done" || s.done !== null ? this.client.list("done") : null
       ]);
       const list = await this.deliverDue(first.reminders) ? await this.client.list("all") : first;
       const keep = this.rows()[s.selected]?.id;
@@ -1782,7 +1805,7 @@ var TuiApp = class {
   }
   /**
    * Reminders shown here count as shown: due ones in `reminders` are marked delivered, like the hooks and
-   * `mokkan watch` do. Not on the Done tab, which does not show them. Returns whether the server took the call.
+   * `mokkan watch` do. Not in the done view, which does not show them. Returns whether the server took the call.
    */
   async deliverDue(reminders) {
     if (this.state.tab === "done") return false;
@@ -1842,7 +1865,7 @@ var TuiApp = class {
         return;
       }
       if (err.status === 404 && err.code === "empty") {
-        this.say("List is empty.");
+        this.say("The stack is empty.");
         return;
       }
       const hint = apiErrorHint(err);

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The pane and `mokkan ui` share one layout.** One stack and a done view replace the todo / reminders / done tabs (and Active / All / Done in `mokkan ui`). Todos (`□`) and reminders (`◷ ● ○ ·`) look different; reminder times always say their direction (`in 40m`, `Wed 17:00`, `overdue 40m`, `2h ago`); the selected row shows its history. Keys match across both: `a` done, `k` acknowledge, `s` switch view (in `mokkan ui`, `a` used to acknowledge and `k`/`j` moved the selection; `K` now acknowledges all). Pop and dequeue name the reminder they will remove.
+- **The pane is more honest about its state.** Errors show in every mode, including inside a field, and the typed text is kept. A running command blocks repeat presses (no more double pops). Every row can be reached. Going offline keeps the last list, marked as stale. The pane is drawn like `mokkan ui`: the same header, `Stack │ Done` views, selected row marked by `▸` and bold, and key footer.
+
 ## 0.3.1 — unreleased
 
 - **A pane in Claude Code.** `/mokkan-pane` opens a live view of the stack inside Claude Code (docked beside the transcript in the fullscreen layout): tabs for todo, reminders and done, a pointer moved with the arrows or digits, Enter to mark done or reopen, one key per command, login and registration with a masked password. It is a mod: a hooks module the plugin ships next to its shell hooks.

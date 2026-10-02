@@ -15,6 +15,7 @@ describe('display width', () => {
     expect(displayWidth('')).toBe(0);
     expect(displayWidth('x')).toBe(1);
     for (const emoji of ['✅', '⚡', '⏰', '🟢', '🆗']) expect(displayWidth(emoji)).toBe(2);
+    for (const glyph of ['□', '◷', '●', '○', '·', '✓', '▸', '…']) expect(displayWidth(glyph)).toBe(1); // East-Asian-ambiguous: one
   });
 
   it('fits text into a width with an ellipsis', () => {

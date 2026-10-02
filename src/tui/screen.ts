@@ -1,6 +1,6 @@
-import { cleanText, creditSegments, formatAge, formatWhen, DEFAULT_GRACE_MINUTES, type Tone } from '../text.js';
+import { cleanText, formatAge, type Tone } from '../text.js';
 import type { Reminder } from '../types.js';
-import { ACTIVE_STATES, CHROME_ROWS, rowsOf, type Size, type Tab, type TuiState } from './state.js';
+import { CHROME_ROWS, rowsOf, type Size, type Tab, type TuiState } from './state.js';
 import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
 
 export type { Size };
@@ -9,18 +9,17 @@ const MIN_COLUMNS = 20;
 const MIN_ROWS = 8;
 /** Below this many columns for the text, a row drops its time column. */
 const MIN_TEXT_COLUMNS = 10;
-/** Width of the row prefix: marker, number, state. */
-const ROW_PREFIX_COLUMNS = 1 + 3 + 2 + 12 + 1;
 /** A row's time column is separated from its text by at least this many columns. */
 const TIME_GAP_COLUMNS = 2;
-const GRACE_MS = DEFAULT_GRACE_MINUTES * 60_000;
+/** Under this many credits the header warns. */
+const LOW_CREDITS = 10;
 /** Columns the header keeps for its left side when a long error message is shortened. */
 const HEADER_LEFT_MIN = 24;
 /** ` Email     › ` and ` Password  › ` are this wide. */
 export const LOGIN_FIELD_COLUMN = 13;
 
-type Style = Tone | 'bold' | 'reverse';
-const SGR: Record<Style, string> = { red: '31', yellow: '33', green: '32', dim: '2', plain: '', bold: '1', reverse: '7' };
+type Style = Tone | 'bold';
+const SGR: Record<Style, string> = { red: '31', yellow: '33', green: '32', dim: '2', plain: '', bold: '1' };
 
 export function paint(text: string, ...styles: Style[]): string {
   const codes = styles.map((s) => SGR[s]).filter((c) => c !== '');
@@ -130,24 +129,33 @@ function dashboardLines(state: TuiState, size: Size, now: Date): string[] {
   const out: string[] = [header(state, columns, now), tabs(state, columns), '─'.repeat(columns)];
   const listRows = rows - CHROME_ROWS;
   const items = rowsOf(state);
+  const list: string[] = [];
   if (items.length === 0) {
-    const empty = state.tab === 'done' ? 'Nothing done yet.' : 'No reminders. Press p to push one.';
-    out.push(line([part(` ${empty}`, 'dim')], [], columns));
-    for (let i = 1; i < listRows; i++) out.push('');
+    const empty = state.tab === 'done' ? 'Nothing finished yet.' : 'Nothing on the stack. p adds a todo, i a reminder.';
+    list.push(line([part(` ${empty}`, 'dim')], [], columns));
   } else {
-    for (let i = 0; i < listRows; i++) {
-      const idx = state.scroll + i;
-      out.push(idx < items.length ? row(items[idx], idx, idx === state.selected, columns, now) : '');
+    const numberWidth = String(items.length).length;
+    for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
+      const selected = idx === state.selected;
+      list.push(row(items[idx], idx, numberWidth, selected, columns, now));
+      if (selected) list.push(line([part(' '.repeat(rowPrefixWidth(numberWidth))), part(detail(items[idx], now), 'dim')], [], columns));
     }
   }
-  out.push(state.message ? line([part(` ${clean(state.message.text)}`, state.message.tone)], [], columns) : '');
+  // The selected row's detail line takes the row kept for it in CHROME_ROWS.
+  while (list.length < listRows + 1) list.push('');
+  out.push(...list);
+  const m = state.message;
+  out.push(m ? line([part(` ${m.tone === 'red' ? 'error: ' : ''}${clean(m.text)}`, m.tone)], [], columns) : '');
   out.push(...footer(state, columns));
   return out;
 }
 
 function header(state: TuiState, columns: number, now: Date): string {
   const left: Part[] = [part(' mokkan', 'bold'), part(` · ${clean(state.email)}`)];
-  for (const seg of creditSegments(state.credits)) left.push(part(seg.text, seg.tone));
+  const c = state.credits;
+  if (typeof c === 'number' && Number.isFinite(c)) {
+    left.push(c <= 0 ? part(` · ${c} credits · buy`, 'red') : c < LOW_CREDITS ? part(` · ${c} credits · low`, 'yellow') : part(` · ${c} credits`, 'dim'));
+  }
   left.push(part(` · ${state.host}`));
   return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
 }
@@ -155,21 +163,18 @@ function header(state: TuiState, columns: number, now: Date): string {
 /** The header's right side. A long error message is shortened so the whole part fits `maxWidth`. */
 function status(state: TuiState, now: Date, maxWidth: number): Part {
   const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
-  if (state.refreshing) return part('refreshing…', 'dim');
+  if (state.refreshing) return part('syncing…', 'dim');
   if (state.error) {
-    const suffix = age ? ` · data ${age} old` : '';
-    if (state.error.kind === 'offline') return part(`offline${suffix}`, 'red');
+    const suffix = age ? ` · ${age} old` : '';
+    if (state.error.kind === 'offline') return part(`offline${suffix}`, 'yellow');
     const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth('error: ') - displayWidth(suffix)));
     return part(`error: ${msg}${suffix}`, 'red');
   }
-  return part(age ? `refreshed ${age} ago` : 'loading…', 'dim');
+  return part(age ? `synced ${age}` : 'loading…', 'dim');
 }
 
 function tabs(state: TuiState, columns: number): string {
-  const active = state.reminders.filter((r) => ACTIVE_STATES.has(r.state)).length;
-  const labels: [Tab, string][] = [
-    ['active', `Active ${active}`], ['all', `All ${state.reminders.length}`], ['done', state.done ? `Done ${state.done.length}` : 'Done'],
-  ];
+  const labels: [Tab, string][] = [['stack', `Stack ${state.reminders.length}`], ['done', state.done ? `Done ${state.done.length}` : 'Done']];
   const parts: Part[] = [part(' ')];
   labels.forEach(([tab, label], i) => {
     if (i > 0) parts.push(part(' │ ', 'dim'));
@@ -178,33 +183,58 @@ function tabs(state: TuiState, columns: number): string {
   return line(parts, [], columns);
 }
 
-/** The time column and the tone of the state column for one reminder. */
-function timing(r: Reminder, now: Date): { when: string; tone: Tone } {
-  const t = now.getTime();
-  const due = r.due_at ? Date.parse(r.due_at) : NaN;
-  const isDue = r.state === 'due' || (r.state === 'scheduled' && due <= t);
-  if (isDue) {
-    if (Number.isNaN(due)) return { when: '', tone: 'yellow' };
-    if (t - due > GRACE_MS) return { when: `overdue ${formatAge(t - due)}`, tone: 'red' };
-    return { when: `due ${formatWhen(new Date(due), now)}`, tone: 'yellow' };
-  }
-  if (r.state === 'scheduled') return { when: `@ ${formatWhen(new Date(due), now)}`, tone: 'dim' };
-  if (r.state === 'done') return { when: r.done_at ? `done ${formatWhen(new Date(r.done_at), now)}` : '', tone: 'dim' };
-  const when = Number.isNaN(due) ? '' : `due ${formatWhen(new Date(due), now)}`;
-  return { when, tone: r.state === 'delivered' ? 'plain' : 'dim' };
+/** A todo has no due time (`push`); a reminder has one (`in`, or `t` on a todo). */
+const isTodo = (r: Reminder): boolean => r.due_at === null;
+
+/** The glyph: its shape is the kind (□ todo, the rest reminders), its variant and tone the state. */
+function glyph(r: Reminder, now: Date): Part {
+  if (r.state === 'done') return part('✓', 'dim');
+  if (isTodo(r)) return part('□', r.state === 'acknowledged' ? 'dim' : 'plain');
+  if (r.state === 'due' || (r.state === 'scheduled' && Date.parse(r.due_at!) <= now.getTime())) return part('●', 'yellow');
+  if (r.state === 'scheduled') return part('◷', 'dim');
+  if (r.state === 'delivered') return part('○');
+  return part('·', 'dim');
 }
 
-function row(r: Reminder, index: number, selected: boolean, columns: number, now: Date): string {
-  const { when, tone } = timing(r, now);
-  const left = [
-    part(`${selected ? '▸' : ' '}${padStart(String(index + 1), 3)}  `),
-    part(padEnd(clean(r.state), 12), tone),
-    part(` ${clean(r.text)}`),
-  ];
-  const right = when === '' ? [] : [part(when, tone)];
-  return line(left, right, columns, {
-    minLeft: ROW_PREFIX_COLUMNS + MIN_TEXT_COLUMNS, minGap: TIME_GAP_COLUMNS, rowStyle: selected ? 'reverse' : undefined,
+/** `17:00` today, `Wed 17:00` within a week, `12 Oct` beyond. Local time. */
+function formatAhead(at: Date, now: Date): string {
+  const time = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (at.toDateString() === now.toDateString()) return time;
+  if (at.getTime() - now.getTime() < 7 * 86400_000) return `${at.toLocaleDateString('en-US', { weekday: 'short' })} ${time}`;
+  return at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+/** The time column, reminders only. Always says its direction: `in 40m` / `17:00`, `overdue 40m`, `40m ago`. */
+function timing(r: Reminder, now: Date): Part | null {
+  if (isTodo(r)) return null;
+  const due = Date.parse(r.due_at!);
+  if (Number.isNaN(due)) return null;
+  const t = now.getTime();
+  if (due > t) return part(due - t < 3_600_000 ? `in ${formatAge(due - t)}` : formatAhead(new Date(due), now), 'dim');
+  if (r.state === 'due' || r.state === 'scheduled') return part(`overdue ${formatAge(t - due)}`, 'red');
+  return part(`${formatAge(t - due)} ago`, 'dim');
+}
+
+/** `▸ □ 1: `: marker, glyph, number. */
+const rowPrefixWidth = (numberWidth: number): number => 4 + numberWidth + 2;
+
+function row(r: Reminder, index: number, numberWidth: number, selected: boolean, columns: number, now: Date): string {
+  const when = timing(r, now);
+  const left = [part(`${selected ? '▸' : ' '} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${clean(r.text)}`)];
+  return line(left, when ? [when] : [], columns, {
+    minLeft: rowPrefixWidth(numberWidth) + MIN_TEXT_COLUMNS, minGap: TIME_GAP_COLUMNS, rowStyle: selected ? 'bold' : undefined,
   });
+}
+
+/** The line under the selected row: `todo · pushed 3h ago · seen 1h ago · acked`, or `done 2h ago · pushed 1d ago`. */
+function detail(r: Reminder, now: Date): string {
+  const ago = (at: string): string => `${formatAge(now.getTime() - Date.parse(at))} ago`;
+  const pushed = `pushed ${ago(r.created_at)}`;
+  if (r.state === 'done') return r.done_at ? `done ${ago(r.done_at)} · ${pushed}` : `done · ${pushed}`;
+  const parts = [isTodo(r) ? 'todo' : 'reminder', pushed];
+  if (r.delivered_at) parts.push(`seen ${ago(r.delivered_at)}`);
+  if (r.acknowledged_at) parts.push('acked');
+  return parts.join(' · ');
 }
 
 function footer(state: TuiState, columns: number): string[] {
@@ -215,14 +245,13 @@ function footer(state: TuiState, columns: number): string[] {
     return [line([part(label, 'bold'), part(text)], [], columns), line([part(` ${m.hint}`, 'dim')], [], columns)];
   }
   if (m.kind === 'confirm') {
-    // The reminder is shortened, never `y/n`.
-    const verb = m.action === 'pop' ? 'Pop' : 'Dequeue';
-    const room = columns - displayWidth(` ${verb} ""? y/n`);
-    return [line([part(` ${verb} "${fit(clean(m.text), room)}"? y/n`, 'yellow')], [], columns), ''];
+    // The reminder is shortened, never the answers.
+    const room = columns - displayWidth(` ${m.action} ""?  y: yes  n: no`);
+    return [line([part(` ${m.action} "${fit(clean(m.text), room)}"?  y: yes  n: no`, 'yellow')], [], columns), ''];
   }
   return [
-    line([part(' p push · i schedule · e edit · t time · a ack · A ack all', 'dim')], [], columns),
-    line([part(' x pop · d dequeue · b buy · Tab view · r refresh · q quit · ↑↓ move', 'dim')], [], columns),
+    line([part(' p todo · i remind · e edit · t time · a done · k ack · s view', 'dim')], [], columns),
+    line([part(' x pop · d dequeue · K ack all · r refresh · b buy · q quit · ↑↓ 1-9 move', 'dim')], [], columns),
   ];
 }
 
