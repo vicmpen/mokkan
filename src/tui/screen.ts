@@ -1,7 +1,7 @@
 import { cleanText, formatAge, type Tone } from '../text.js';
 import type { Reminder } from '../types.js';
 import { CHROME_ROWS, TABS, inTab, nextTab, rowsOf, tabLabel, type Size, type TuiState } from './state.js';
-import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart } from './text.js';
+import { displayWidth, fit, graphemeWidth, graphemes, padEnd, padStart, wrap } from './text.js';
 
 export type { Size };
 
@@ -136,13 +136,17 @@ function dashboardLines(state: TuiState, size: Size, now: Date): string[] {
     for (const text of empty) list.push(line([part(` ${text}`, 'dim')], [], columns));
   } else {
     const numberWidth = String(items.length).length;
-    for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
-      const selected = idx === state.selected;
-      list.push(row(items[idx], idx, numberWidth, selected, columns, now));
-      if (selected) list.push(line([part(' '.repeat(rowPrefixWidth(numberWidth))), part(detail(items[idx], now), 'dim')], [], columns));
+    // The selected row's detail line takes the row kept for it in CHROME_ROWS.
+    const room = listRows + 1;
+    const sel = items[state.selected] ? selectedRow(items[state.selected], state.selected, numberWidth, columns, now, room) : [];
+    // The window starts at state.scroll, or lower when the selected row's wrapped text would run past the bottom.
+    let start = state.scroll;
+    while (start < state.selected && state.selected - start + sel.length > room) start++;
+    for (let idx = start; idx < items.length && list.length < room; idx++) {
+      list.push(...(idx === state.selected ? sel : [row(items[idx], idx, numberWidth, false, columns, now)]));
     }
+    list.splice(room);
   }
-  // The selected row's detail line takes the row kept for it in CHROME_ROWS.
   while (list.length < listRows + 1) list.push('');
   out.push(...list);
   const m = state.message;
@@ -222,12 +226,33 @@ function timing(r: Reminder, now: Date): Part | null {
 /** `▸ □ 1: `: marker, glyph, number. */
 const rowPrefixWidth = (numberWidth: number): number => 4 + numberWidth + 2;
 
-function row(r: Reminder, index: number, numberWidth: number, selected: boolean, columns: number, now: Date): string {
+function row(r: Reminder, index: number, numberWidth: number, selected: boolean, columns: number, now: Date, text = clean(r.text)): string {
   const when = timing(r, now);
-  const left = [part(`${selected ? '▸' : ' '} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${clean(r.text)}`)];
+  const left = [part(`${selected ? '▸' : ' '} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${text}`)];
   return line(left, when ? [when] : [], columns, {
     minLeft: rowPrefixWidth(numberWidth) + MIN_TEXT_COLUMNS, minGap: TIME_GAP_COLUMNS, rowStyle: selected ? 'bold' : undefined,
   });
+}
+
+/**
+ * The selected row, at most `max` lines: its whole text wrapped under the text column, bold, then its detail line.
+ * Text taller than that is cut with `…` on its last line.
+ */
+function selectedRow(r: Reminder, index: number, numberWidth: number, columns: number, now: Date, max: number): string[] {
+  const prefix = rowPrefixWidth(numberWidth);
+  const when = timing(r, now);
+  const time = when ? displayWidth(when.text) + TIME_GAP_COLUMNS : 0;
+  // The first line keeps the time column on the same terms as `line`.
+  const first = columns - prefix - (time > 0 && columns - time >= prefix + MIN_TEXT_COLUMNS ? time : 0);
+  const text = wrap(clean(r.text), first, columns - prefix);
+  const shown = text.slice(0, max - 1);
+  const last = shown.length - 1;
+  if (shown.length < text.length) shown[last] = fit(`${shown[last]} ${text[last + 1]}`, last === 0 ? first : columns - prefix);
+  return [
+    row(r, index, numberWidth, true, columns, now, shown[0]),
+    ...shown.slice(1).map((t) => line([part(' '.repeat(prefix)), part(t)], [], columns, { rowStyle: 'bold' })),
+    line([part(' '.repeat(prefix)), part(detail(r, now), 'dim')], [], columns),
+  ];
 }
 
 /** The line under the selected row: `todo · added 3h ago · shown 1h ago · acked 5m ago`, or `archived 2h ago · added 1d ago`. */

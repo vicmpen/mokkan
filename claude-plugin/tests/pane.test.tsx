@@ -869,3 +869,20 @@ test('a todo row as long as the pane, or longer, stays one line of the body widt
     expect([...drawn].length + 3).toBe(width)
   }
 })
+
+test('the selected row wraps its whole text under the text column; the others stay cut', async ($, on) => {
+  const { session, clock } = fakeCli(on)
+  const long = 'renew the TLS cert on the staging box before friday and tell the platform team when it is done'
+  session.stack = [row(A, long, 'delivered', null), row(C, long, 'delivered', null)]
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  expect((await ui.find({ key: `row-${A}` }))?.text).toMatch(/…$/)
+  await ui.press({ key: `row-${A}` })
+  // 44 columns less the border and `▸ ▎ 1: ` leaves 35 cells a line; words break at spaces.
+  expect((await ui.find({ key: `row-${A}` }))?.text).toBe('renew the TLS cert on the staging')
+  expect(await shows(ui, /^ {7}box before friday and tell the$/)).toBe(true)
+  expect(await shows(ui, /^ {7}platform team when it is done$/)).toBe(true)
+  expect(await shows(ui, /^ {7}todo · added 3h ago/)).toBe(true)
+  expect((await ui.find({ key: `row-${C}` }))?.text).toMatch(/…$/)
+  await ui.unmount()
+})

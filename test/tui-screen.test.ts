@@ -164,14 +164,46 @@ describe('render: dashboard', () => {
     expect(lines[21]).not.toContain('item');
   });
 
+  it('wraps the selected row\'s whole text under its text column, bold; the other rows stay cut', () => {
+    const text = 'word '.repeat(30).trim();
+    const long = reminder({ id: 'l', text, position: 4, due_at: at(-20 * MIN), created_at: at(-3 * HOUR) });
+    const raw = render(dashboard({ reminders: [long, r2, { ...long, id: 'm' }] }), SIZE, NOW);
+    const lines = plain(raw);
+    // 79 columns less `▸ □ 1: ` and `  overdue 20m` leave 59 for the first line, 72 for the rest; words break at spaces.
+    expect(lines[3]).toBe(`▸ ● 1: ${'word '.repeat(11)}word  overdue 20m`);
+    expect(lines[4]).toBe(`       ${'word '.repeat(13)}word`.padEnd(79));
+    expect(lines[5]).toBe(`       ${'word '.repeat(3)}word`.padEnd(79));
+    expect(raw[5]).toContain('\x1b[1m');
+    expect(lines[6].trimEnd()).toBe('       reminder · added 3h ago');
+    expect(lines[8]).toMatch(/^ {2}● 3: word.*…  overdue 20m$/);
+  });
+
+  it('scrolls an expanded selected row fully into view, and caps text taller than the list', () => {
+    const many = Array.from({ length: 30 }, (_, i) => reminder({ id: `r${i}`, text: `item ${i + 1}`, position: 30 - i }));
+    many[25] = { ...many[25], text: `item 26 ${'word '.repeat(40).trim()}` };
+    // selected 25, scroll 9: rows 10–26 fill the list, so the two extra lines of 26 push the window down two.
+    const lines = plain(render(dashboard({ reminders: many, tab: 'todos', selected: 25, scroll: 9 }), SIZE, NOW));
+    expect(lines[3].startsWith('  □ 12: item 12')).toBe(true);
+    expect(lines[17].startsWith('▸ □ 26: item 26 word')).toBe(true);
+    expect(lines[20].trim()).toBe('todo · added 0s ago');
+    expect(lines[21]).not.toContain('item');
+
+    const huge = reminder({ id: 'h', text: 'word '.repeat(400).trim(), position: 1 });
+    const capped = plain(render(dashboard({ reminders: [huge], tab: 'todos' }), SIZE, NOW));
+    expect(capped[3].startsWith('▸ □ 1: word')).toBe(true);
+    expect(capped[19].trimEnd()).toMatch(/…$/); // the last line the list has, ahead of the detail line
+    expect(capped[20].trim()).toBe('todo · added 0s ago');
+  });
+
   it('truncates text and drops the time column on narrow terminals', () => {
-    const narrow = plain(render(dashboard(), { columns: 40, rows: 24 }, NOW));
+    // Row 1 unselected: the selected row wraps instead.
+    const narrow = plain(render(dashboard({ selected: 1 }), { columns: 40, rows: 24 }, NOW));
     expect(narrow[3]).toContain('…');
     for (const l of narrow) expect(displayWidth(l)).toBeLessThanOrEqual(39);
-    const tight = plain(render(dashboard(), { columns: 44, rows: 24 }, NOW));
+    const tight = plain(render(dashboard({ selected: 1 }), { columns: 44, rows: 24 }, NOW));
     expect(tight[3].endsWith('…  overdue 20m')).toBe(true); // at least two columns before the time
     expect(displayWidth(tight[3])).toBe(43);
-    const tiny = plain(render(dashboard(), { columns: 28, rows: 24 }, NOW));
+    const tiny = plain(render(dashboard({ selected: 1 }), { columns: 28, rows: 24 }, NOW));
     expect(tiny[3]).not.toContain('overdue');
     expect(displayWidth(tiny[3])).toBe(27);
   });
@@ -185,7 +217,7 @@ describe('render: dashboard', () => {
     const lines = plain(render(dashboard({ reminders: [wide], tab: 'todos' }), { columns: 40, rows: 24 }, NOW));
     expect(displayWidth(lines[3])).toBe(39);
     const ja = reminder({ id: 'j', text: '日本語のテキスト'.repeat(6), position: 1, due_at: at(-20 * MIN) });
-    const jaLine = plain(render(dashboard({ reminders: [ja] }), { columns: 40, rows: 24 }, NOW))[3];
+    const jaLine = plain(render(dashboard({ reminders: [ja, r3], selected: 1 }), { columns: 40, rows: 24 }, NOW))[3];
     expect(displayWidth(jaLine)).toBe(39);
     expect(jaLine.endsWith('…  overdue 20m') || jaLine.endsWith('… overdue 20m')).toBe(true); // a wide cut may leave one more space
     const odd = reminder({ id: 's', text: 'odd state', state: '\x1b]0;pwned\x07\x1b[2J' as Reminder['state'], position: 1, due_at: at(-MIN) });

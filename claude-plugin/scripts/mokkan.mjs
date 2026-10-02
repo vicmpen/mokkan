@@ -1087,6 +1087,24 @@ function fit(text, width) {
   }
   return `${out}\u2026`;
 }
+function wrap(text, first, rest) {
+  const lines = [];
+  let line2 = [];
+  let used = 0;
+  for (const g of graphemes(text)) {
+    if (used + graphemeWidth(g) > (lines.length === 0 ? first : rest) && line2.length > 0) {
+      const space = g === " " ? line2.length : line2.lastIndexOf(" ");
+      const carried = space > 0 ? line2.splice(space).slice(1) : [];
+      lines.push(line2.join(""));
+      line2 = carried;
+      used = carried.reduce((n, c) => n + graphemeWidth(c), 0);
+      if (g === " ") continue;
+    }
+    line2.push(g);
+    used += graphemeWidth(g);
+  }
+  return [...lines, line2.join("")];
+}
 function padEnd(text, width) {
   return text + " ".repeat(Math.max(0, width - displayWidth(text)));
 }
@@ -1188,11 +1206,14 @@ function dashboardLines(state, size, now) {
     for (const text of empty) list.push(line([part(` ${text}`, "dim")], [], columns));
   } else {
     const numberWidth = String(items.length).length;
-    for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
-      const selected = idx === state.selected;
-      list.push(row(items[idx], idx, numberWidth, selected, columns, now));
-      if (selected) list.push(line([part(" ".repeat(rowPrefixWidth(numberWidth))), part(detail(items[idx], now), "dim")], [], columns));
+    const room = listRows + 1;
+    const sel = items[state.selected] ? selectedRow(items[state.selected], state.selected, numberWidth, columns, now, room) : [];
+    let start = state.scroll;
+    while (start < state.selected && state.selected - start + sel.length > room) start++;
+    for (let idx = start; idx < items.length && list.length < room; idx++) {
+      list.push(...idx === state.selected ? sel : [row(items[idx], idx, numberWidth, false, columns, now)]);
     }
+    list.splice(room);
   }
   while (list.length < listRows + 1) list.push("");
   out.push(...list);
@@ -1256,14 +1277,29 @@ function timing(r, now) {
   return part(`${formatAge(t - due)} ago`, "dim");
 }
 var rowPrefixWidth = (numberWidth) => 4 + numberWidth + 2;
-function row(r, index, numberWidth, selected, columns, now) {
+function row(r, index, numberWidth, selected, columns, now, text = clean(r.text)) {
   const when = timing(r, now);
-  const left = [part(`${selected ? "\u25B8" : " "} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${clean(r.text)}`)];
+  const left = [part(`${selected ? "\u25B8" : " "} `), glyph(r, now), part(` ${padStart(String(index + 1), numberWidth)}: ${text}`)];
   return line(left, when ? [when] : [], columns, {
     minLeft: rowPrefixWidth(numberWidth) + MIN_TEXT_COLUMNS,
     minGap: TIME_GAP_COLUMNS,
     rowStyle: selected ? "bold" : void 0
   });
+}
+function selectedRow(r, index, numberWidth, columns, now, max) {
+  const prefix = rowPrefixWidth(numberWidth);
+  const when = timing(r, now);
+  const time = when ? displayWidth(when.text) + TIME_GAP_COLUMNS : 0;
+  const first = columns - prefix - (time > 0 && columns - time >= prefix + MIN_TEXT_COLUMNS ? time : 0);
+  const text = wrap(clean(r.text), first, columns - prefix);
+  const shown = text.slice(0, max - 1);
+  const last = shown.length - 1;
+  if (shown.length < text.length) shown[last] = fit(`${shown[last]} ${text[last + 1]}`, last === 0 ? first : columns - prefix);
+  return [
+    row(r, index, numberWidth, true, columns, now, shown[0]),
+    ...shown.slice(1).map((t) => line([part(" ".repeat(prefix)), part(t)], [], columns, { rowStyle: "bold" })),
+    line([part(" ".repeat(prefix)), part(detail(r, now), "dim")], [], columns)
+  ];
 }
 function detail(r, now) {
   const ago = (at) => `${formatAge(now.getTime() - Date.parse(at))} ago`;

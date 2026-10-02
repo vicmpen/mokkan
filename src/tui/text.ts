@@ -59,6 +59,26 @@ export function fit(text: string, width: number): string {
   return `${out}…`;
 }
 
+/** Wraps to `first` columns on the first line and `rest` on the others, at the last space; a word wider than its line is cut. */
+export function wrap(text: string, first: number, rest: number): string[] {
+  const lines: string[] = [];
+  let line: string[] = [];
+  let used = 0;
+  for (const g of graphemes(text)) {
+    if (used + graphemeWidth(g) > (lines.length === 0 ? first : rest) && line.length > 0) {
+      const space = g === ' ' ? line.length : line.lastIndexOf(' ');
+      const carried = space > 0 ? line.splice(space).slice(1) : [];
+      lines.push(line.join(''));
+      line = carried;
+      used = carried.reduce((n, c) => n + graphemeWidth(c), 0);
+      if (g === ' ') continue;
+    }
+    line.push(g);
+    used += graphemeWidth(g);
+  }
+  return [...lines, line.join('')];
+}
+
 export function padEnd(text: string, width: number): string {
   return text + ' '.repeat(Math.max(0, width - displayWidth(text)));
 }

@@ -223,6 +223,25 @@ function fit(text: string, width: number): string {
   }
   return `${out}…`
 }
+/** Wraps to `first` cells on the first line and `rest` on the others, at the last space; a word wider than its line is cut. */
+function wrap(text: string, first: number, rest: number): string[] {
+  const lines: string[] = []
+  let line: string[] = []
+  let used = 0
+  for (const g of graphemes(text)) {
+    if (used + cells(g) > (lines.length === 0 ? first : rest) && line.length > 0) {
+      const space = g === ' ' ? line.length : line.lastIndexOf(' ')
+      const carried = space > 0 ? line.splice(space).slice(1) : []
+      lines.push(line.join(''))
+      line = carried
+      used = carried.reduce((n, c) => n + cells(c), 0)
+      if (g === ' ') continue
+    }
+    line.push(g)
+    used += cells(g)
+  }
+  return [...lines, line.join('')]
+}
 
 const span = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -687,7 +706,9 @@ export const register: Register = on => {
               const time = when(r, now)
               const [glyph, settled] = mark(r)
               // `▸ ▎ 1: text`, the time flush right; the selected row has the pointer and bold marks, as in `mokkan ui`.
-              const text = fit(r.text, Math.max(4, width - lead - (time ? wide(time) + 2 : 0)))
+              const room = Math.max(4, width - lead - (time ? wide(time) + 2 : 0))
+              // The selected row wraps its whole text under the text column; the others are cut to one line.
+              const [text = '', ...more] = isSel ? wrap(r.text, room, Math.max(4, width - lead)) : [fit(r.text, room)]
               // No gap when an untimed row's text fills the width: one more cell would wrap the row.
               const gap = Math.max(time ? 1 : 0, width - lead - wide(text) - wide(time))
               return (
@@ -703,6 +724,7 @@ export const register: Register = on => {
                     {gap > 0 && <Text>{' '.repeat(gap)}</Text>}
                     {time && <Text bold={isSel} color={time.startsWith('overdue') ? 'red' : undefined} dimColor={!time.startsWith('overdue') && !isSel}>{time}</Text>}
                   </Box>
+                  {more.map((line, j) => <Text key={`more-${j}`}>{`${' '.repeat(lead)}${line}`}</Text>)}
                   {isSel && detail(r, now, width - lead).map((line, j) => <Text key={`detail-${j}`} dimColor>{`${' '.repeat(lead)}${fit(line, width - lead)}`}</Text>)}
                 </Box>
               )
