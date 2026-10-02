@@ -298,10 +298,6 @@ export const register: Register = on => {
   let secret = ''
 
   on('session.start', async ($, e, next) => {
-    // A user-level /mokkan (install.sh links one, for sessions without this plugin) keeps its name; the hook below answers it.
-    if (!(await $.command.list()).some(c => c.name === 'mokkan' && c.plugin !== 'mokkan')) {
-      await $.command.register({ name: 'mokkan', description: 'Toggle the mokkan pane; with a verb, run it: push, in, list, ack, done, balance…', argumentHint: '[push <text> | in <duration> <text> | list | ack <id|all> | done <id> | balance | …]', immediate: true })
-    }
     $.clock.every(REFRESH_MS, async () => {
       if ((await $.ui.panes()).some(p => p.id === PANE)) await refresh($)
     })
@@ -326,7 +322,9 @@ export const register: Register = on => {
   })
 
   // `/mokkan` alone toggles the pane; `/mokkan <verb> …` runs the CLI and shows its output, with no model turn.
-  on('command.run', { command: 'mokkan' }, async ($, e) => {
+  // The engine keeps the bare `/mokkan` for this plugin's skill, so typing it runs `mokkan:mokkan`: the hook answers that
+  // (and a user-level `/mokkan`, should one exist). Claude still uses the skill when asked in words.
+  on('command.run', { command: ['mokkan:mokkan', 'mokkan'] }, async ($, e) => {
     const line = e.args.trim()
     const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
     if (line) {

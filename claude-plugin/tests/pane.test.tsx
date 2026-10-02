@@ -42,8 +42,6 @@ function fakeCli(on: On) {
   on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); toastMs.push((e as { timeoutMs?: number }).timeoutMs); return { value: undefined } })
   on('ui.focus', () => ({}))
-  const listed: { name: string; description: string; source: 'user' | 'plugin' }[] = []
-  on('command.list', () => ({ value: listed }))
   on('command.register', (_, e) => { commands.push({ ...e }); return { value: { command: e.name } } })
   on('ui.close', (_, e) => { panes.splice(panes.findIndex(p => p.id === e.id) >>> 0, 1); return { value: undefined } })
   on('fs.stat', () => { stats++; return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } } })
@@ -81,7 +79,7 @@ function fakeCli(on: On) {
     if (cmd === 'push') stack.unshift(row(`f6f6f6f6-0000-4000-8000-${String(stack.length).padStart(12, '0')}`, e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, envs, clock, toasts, toastMs, commands, listed, panes, opens, stats: () => stats }
+  return { ran, session, envs, clock, toasts, toastMs, commands, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -90,7 +88,7 @@ const status = async (ui: Ui) => (await ui.find({ key: 'status' }))?.text.trim()
 const shows = async (ui: Ui, text: string | RegExp) => (await ui.findAll({ type: 'Text' })).some(t => (typeof text === 'string' ? t.text.trim() === text : text.test(t.text)))
 
 async function opened($: Engine, clock: { settle: () => Promise<void> }) {
-  await $.command.run({ command: 'mokkan', args: '', ...RUN })
+  await $.command.run({ command: 'mokkan:mokkan', args: '', ...RUN }) // what a typed /mokkan runs
   await clock.settle()
 }
 
@@ -634,11 +632,11 @@ test('the 15-second timer refreshes only while the pane is open', async ($, on) 
   expect(lists()).toBe(2)
 })
 
-test('/mokkan runs mid-turn, and the CLI path is looked up once', async ($, on) => {
+test('/mokkan is the skill\'s own slash command: nothing is registered, and the CLI path is looked up once', async ($, on) => {
   const { clock, commands, stats } = fakeCli(on)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  expect(commands).toEqual([expect.objectContaining({ name: 'mokkan', immediate: true })])
+  expect(commands).toEqual([]) // the engine refuses a bare /mokkan beside the skill /mokkan:mokkan
   await opened($, clock)
   await clock.advance(60_000)
   expect(stats()).toBe(1)
@@ -683,7 +681,7 @@ test('b opens Stripe Checkout through the CLI, and says when it could not', asyn
 
 test('/mokkan alone toggles the pane; with a verb it runs the CLI and shows its output', async ($, on) => {
   const { ran, clock, panes } = fakeCli(on)
-  const mokkan = async (args: string) => (await $.command.run({ command: 'mokkan', args, ...RUN })).text
+  const mokkan = async (args: string) => (await $.command.run({ command: 'mokkan:mokkan', args, ...RUN })).text
   expect(await mokkan('')).toMatch(/^mokkan pane opened, docked beside the transcript/)
   await clock.settle()
   expect(panes.map(p => p.id)).toEqual(['mokkan'])
@@ -707,12 +705,8 @@ test('/mokkan alone toggles the pane; with a verb it runs the CLI and shows its 
   expect(ran.length).toBe(before)
 })
 
-test('a user-level /mokkan keeps its name, and the plugin answers it', async ($, on) => {
-  const { commands, listed, clock, panes } = fakeCli(on)
-  listed.push({ name: 'mokkan', description: 'Cross-session reminders', source: 'user' })
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  expect(commands).toEqual([])
+test('a user-level /mokkan, should one exist, is answered by the plugin too', async ($, on) => {
+  const { clock, panes } = fakeCli(on)
   await $.command.run({ command: 'mokkan', args: '', ...RUN })
   await clock.settle()
   expect(panes.map(p => p.id)).toEqual(['mokkan'])

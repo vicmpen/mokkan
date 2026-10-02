@@ -46,17 +46,24 @@ fi
 mkdir -p "$HOME/.codex/skills"
 link_ours "$HOME/.codex/skills/mokkan" "$HERE/codex"
 
-# A user-level /mokkan that runs `mokkan` from PATH, for sessions without the plugin. Where the plugin is loaded, its mod
-# answers /mokkan itself (toggling the pane, or running the command), and the skill stays /mokkan:mokkan.
+# A user-level /mokkan-cli that runs `mokkan` from PATH through Claude, for sessions without the plugin. /mokkan is the
+# plugin's (it toggles the pane, or runs the command); the skill stays /mokkan:mokkan.
 mkdir -p "$HOME/.claude/commands"
-link_ours "$HOME/.claude/commands/mokkan.md" "$HERE/claude-command/mokkan.md"
+link_ours "$HOME/.claude/commands/mokkan-cli.md" "$HERE/claude-command/mokkan-cli.md"
+# The earlier link, ~/.claude/commands/mokkan.md, hides the plugin's /mokkan: remove it, but only if it is ours.
+OLD="$HOME/.claude/commands/mokkan.md"
+if [ -L "$OLD" ]; then
+  case "$(readlink "$OLD")" in
+    "$HERE" | "$HERE"/*) rm "$OLD"; echo "Removed $OLD (now /mokkan-cli; /mokkan is the plugin's)" ;;
+  esac
+fi
 
 cat <<MSG
 
 Claude Code plugin (hooks):
   one session:   claude --plugin-dir "$HERE/claude-plugin"
   every session: export CLAUDE_CODE_PLUGIN_DIRS="$HERE/claude-plugin"   (add to your shell profile)
-Slash command: /mokkan is available in every session via ~/.claude/commands/mokkan.md; with the plugin loaded, /mokkan alone toggles the pane (the plugin's skill is /mokkan:mokkan).
+Slash commands: /mokkan-cli runs mokkan from PATH in every session (~/.claude/commands/mokkan-cli.md). With the plugin loaded, /mokkan toggles the pane or runs a command directly, and /mokkan:mokkan is its skill.
 
 Next: start the server (see the mokkan-server repo README), then run:  mokkan register you@example.com
 MSG

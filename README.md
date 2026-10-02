@@ -88,7 +88,7 @@ From a shell, run `claude plugin marketplace add vicmpen/mokkan`, then `claude p
 
 The plugin provides:
 - **`/mokkan`**: on its own it opens the pane (see below), and closes it when it is open. With a command it runs it and prints the output straight away, without a model turn: `/mokkan push call the bank`, `/mokkan in 2h stretch`, `/mokkan list`. `ui` and `watch` need a terminal, and `login` and `register` are done in the pane (`l`, `r`) or a terminal.
-- **`/mokkan:mokkan <command>`**: the same commands as a skill, run by Claude, which also invokes it when you ask it to remember something.
+- **The mokkan skill**: Claude uses it when you ask it in words to remember something or to change a reminder. The slash-command menu lists `/mokkan` under the skill's full name, `/mokkan:mokkan`; typed, the two are the same.
 - **A mod**: the pane, with your stack beside the transcript and the same actions as `mokkan ui` (see below).
 
 The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and pane run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
@@ -112,9 +112,9 @@ cp -r mokkan/codex ~/.codex/skills/mokkan
 
 The npm package contains the same files under `$(npm root -g)/mokkan/codex`. Codex has no hooks, so the skill tells Codex to check for due reminders at the start and end of each task.
 
-### `/mokkan` without the plugin (optional)
+### `/mokkan-cli` without the plugin (optional)
 
-The plugin gives every session `/mokkan`. In sessions that don't load the plugin, the npm package can give you one too: copy `claude-command/mokkan.md` from the package or from this repository to `~/.claude/commands/mokkan.md`. That command runs `mokkan` from your PATH through Claude, with the same arguments. The two live side by side: where the plugin is loaded it answers `/mokkan` itself (the pane, or the command's output straight away), and elsewhere the user-level command runs.
+`/mokkan` is the plugin's. In sessions that don't load the plugin, the npm package gives you `/mokkan-cli`: copy `claude-command/mokkan-cli.md` from the package or from this repository to `~/.claude/commands/mokkan-cli.md`. It runs `mokkan` from your PATH through Claude and takes the same arguments as `/mokkan`: `/mokkan-cli push call the bank`. Don't name it `mokkan.md`: a user-level `/mokkan` hides the plugin's from the slash-command menu.
 
 ## Account
 
@@ -186,7 +186,7 @@ A reminder with a due time keeps 1 credit in reserve for its email until the ema
 
 ## Uninstall
 
-If you set up the status line that 0.2.0 offered, remove it first, because it runs mokkan: `mokkan statusline --remove` in a terminal (or `/mokkan:mokkan statusline --remove`). This takes it out of `settings.json` and `~/.tmux.conf` after backups and deletes the copy in `~/.local/share/mokkan/`. Then:
+If you set up the status line that 0.2.0 offered, remove it first, because it runs mokkan: `mokkan statusline --remove` in a terminal (or `/mokkan statusline --remove`). This takes it out of `settings.json` and `~/.tmux.conf` after backups and deletes the copy in `~/.local/share/mokkan/`. Then:
 
 - Claude Code plugin: `/plugin uninstall mokkan@mokkan`.
 - npm: `npm uninstall -g @vicmpen/mokkan-cli`.
@@ -228,22 +228,22 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 
 - `src/` holds the `mokkan` CLI, written in TypeScript with no runtime dependencies.
 - `claude-plugin/` is the Claude Code plugin, and `.claude-plugin/marketplace.json` makes this repository its marketplace.
-  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It serves `/mokkan` (registering it unless a user-level `/mokkan` already holds the name, which it then answers), and hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
-  - `skills/mokkan/SKILL.md` is `/mokkan:mokkan`. It runs `node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs"` through `!` bash expansion (quoted, so a plugin path with spaces works; the `allowed-tools` rule carries the same quotes).
+  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It answers `/mokkan`: the engine keeps that bare name for the plugin's skill and runs a typed `/mokkan` as `/mokkan:mokkan`, so the mod registers no command and hooks `command.run` on the skill's name instead (and on a user-level `/mokkan`, should one exist). It hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
+  - `skills/mokkan/SKILL.md` is the skill. A typed `/mokkan` never reaches its text (the mod answers it), so it runs only when Claude invokes it. It runs `node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs"` through `!` bash expansion (quoted, so a plugin path with spaces works; the `allowed-tools` rule carries the same quotes).
   - `scripts/mokkan.mjs` is the bundled CLI. It is committed because plugins are installed straight from git.
   - Check the plugin with `claude plugin validate .` and `claude plugin validate claude-plugin`.
-- `claude-command/mokkan.md` is the same command as a user-level `/mokkan` that runs `mokkan` from PATH, for sessions without the plugin; with the plugin loaded, the mod answers it. A test checks that its instructions match the plugin skill's.
+- `claude-command/mokkan-cli.md` is the skill's command as a user-level `/mokkan-cli` that runs `mokkan` from PATH, for sessions without the plugin. A test checks that its instructions match the plugin skill's.
 - `codex/SKILL.md` is the Codex skill.
-- `install.sh` sets up a dev checkout. It runs `npm ci` and the build, then links `~/.local/bin/mokkan`, `~/.codex/skills/mokkan` and `~/.claude/commands/mokkan.md`, and prints the `claude --plugin-dir` command.
+- `install.sh` sets up a dev checkout. It runs `npm ci` and the build, then links `~/.local/bin/mokkan`, `~/.codex/skills/mokkan` and `~/.claude/commands/mokkan-cli.md` (removing its old `~/.claude/commands/mokkan.md` link), and prints the `claude --plugin-dir` command.
   - It only creates or refreshes symlinks that point into this checkout. Any other file at those paths is left alone with a `warning: ... is not ours; skipped` line.
   - `MOKKAN_INSTALL_SKIP_BUILD=1` skips the install and build steps.
 - `ASSUMPTIONS.md` records every decision and the reason for it.
 
 Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.claude-plugin/plugin.json`, because plugin users stay on a version until it changes. A test checks this. `npm publish` runs the build, typecheck, tests and bundle check first.
 
-### `/mokkan` and shell quoting
+### Shell quoting
 
-The slash command runs `mokkan --argline "$ARGUMENTS" --exit-zero 2>&1`. Claude Code pastes the arguments into that line as text, so they end up inside double quotes. That means `'`, `#`, `*`, `>`, `&`, `;`, `|` and parentheses pass through literally, and the CLI splits the string on whitespace itself (runs of spaces become one space). Inside double quotes the shell still interprets four characters: `$`, `` ` ``, `"` and `\`. Don't use them in `/mokkan` text. For reminders that need them, use `mokkan push ...` in a terminal.
+A typed `/mokkan` hands its text to the CLI as one argument, with no shell in between, so any text works there. When Claude runs the skill, and with `/mokkan-cli`, the command runs `mokkan --argline "$ARGUMENTS" --exit-zero 2>&1`. Claude Code pastes the arguments into that line as text, so they end up inside double quotes. That means `'`, `#`, `*`, `>`, `&`, `;`, `|` and parentheses pass through literally, and the CLI splits the string on whitespace itself (runs of spaces become one space). Inside double quotes the shell still interprets four characters: `$`, `` ` ``, `"` and `\`. Don't use them in `/mokkan` text. For reminders that need them, use `mokkan push ...` in a terminal.
 
 `--exit-zero` makes every failure print on stdout and exit 0, because Claude Code aborts a slash command whose `!` command exits non-zero. This covers an empty `pop`, being logged out and the server being down.
 

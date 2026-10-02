@@ -1,6 +1,6 @@
 {
   "name": "@vicmpen/mokkan-cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Cross-session reminders for Claude Code, Codex and your terminal: a synced stack of notes and scheduled email reminders.",
   "keywords": [
     "reminders",

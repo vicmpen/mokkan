@@ -1,7 +1,7 @@
 ---
 name: mokkan
-description: Ask Claude to run a mokkan command (push, in, edit, ack, done, list, balance…) and relay the output. For the pane or an instant command, type /mokkan instead. Use when the user asks to remember something for later, to add, list, change, schedule, acknowledge or archive a todo or reminder, or about their mokkan credits; pass the mokkan command and its arguments. Never pass --force, logout or buy unless the user typed them.
-argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | done [<id>...] | undone <id>... | pending | status | balance | buy | register <email> | login <email> | logout]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
+description: Type /mokkan alone to open or close the reminders pane, or /mokkan push|in|edit|ack|done|list|balance… to run a command at once. Use when the user asks to remember something for later, to add, list, change, schedule, acknowledge or archive a todo or reminder, or about their mokkan credits; pass the mokkan command and its arguments. Never pass --force, logout or buy unless the user typed them.
+argument-hint: '[nothing: toggle the pane | list | push <text> | in <duration> <text> | edit <n|id> [--in <duration> | --clear-due] [new text] | ack <id|all> | done <id>... | undone <id>... | pending | balance | buy | logout]'
 allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" *)
 ---
 ## Output of `mokkan $ARGUMENTS`

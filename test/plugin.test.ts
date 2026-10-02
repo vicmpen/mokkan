@@ -1,7 +1,7 @@
 import { afterAll, describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
-  lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync,
+  lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PLUGIN = path.join(SKILL_DIR, 'claude-plugin');
-const COMMAND = path.join(SKILL_DIR, 'claude-command', 'mokkan.md');
+const COMMAND = path.join(SKILL_DIR, 'claude-command', 'mokkan-cli.md');
 const PLUGIN_SKILL = path.join(PLUGIN, 'skills', 'mokkan', 'SKILL.md');
 // Quoted: a plugin root with a space in it (verified live; the rule in allowed-tools must carry the same quotes).
 const PLUGIN_RUN_LINE = '!`node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" --argline "$ARGUMENTS" --exit-zero 2>&1`';
@@ -77,10 +77,10 @@ describe('Claude Code plugin files', () => {
   it('the plugin skill and the user-level command give the same instructions', () => {
     const skill = splitFrontmatter(readFileSync(PLUGIN_SKILL, 'utf8'));
     const command = splitFrontmatter(readFileSync(COMMAND, 'utf8'));
-    // Both suggest /mokkan: the plugin serves it too (its mod), so only the line that runs the CLI differs.
-    expect(skill.body.replace(PLUGIN_RUN_LINE, PATH_RUN_LINE)).toBe(command.body);
-    const hint = (front: string[]) => front.find((l) => l.startsWith('argument-hint: '));
-    expect(hint(skill.front)).toBe(hint(command.front));
+    // The skill suggests the plugin's /mokkan, the user-level command itself (/mokkan-cli); the rest is the same.
+    expect(command.body).not.toMatch(/`\/mokkan /);
+    expect(skill.body.replace(PLUGIN_RUN_LINE, PATH_RUN_LINE).replaceAll('`/mokkan ', '`/mokkan-cli ')).toBe(command.body);
+    // The hints differ: typed /mokkan reaches the CLI without a shell (the mod answers it), /mokkan-cli through one.
   });
 
   it('the Codex skill has the required frontmatter', () => {
@@ -112,8 +112,23 @@ describe('install.sh', () => {
       expect(lstatSync(path.join(home, '.local/bin/mokkan')).isSymbolicLink()).toBe(true);
       expect(readlinkSync(path.join(home, '.local/bin/mokkan'))).toBe(path.join(SKILL_DIR, 'dist', 'cli.js'));
       expect(readlinkSync(path.join(home, '.codex/skills/mokkan'))).toBe(path.join(SKILL_DIR, 'codex'));
-      expect(readlinkSync(path.join(home, '.claude/commands/mokkan.md'))).toBe(COMMAND);
+      expect(readlinkSync(path.join(home, '.claude/commands/mokkan-cli.md'))).toBe(COMMAND);
     }
+  });
+
+  it('removes its old /mokkan command link, which would hide the plugin\'s /mokkan, and only its own', () => {
+    const home = newHome();
+    const old = path.join(home, '.claude/commands/mokkan.md');
+    mkdirSync(path.dirname(old), { recursive: true });
+    symlinkSync(path.join(SKILL_DIR, 'claude-command', 'mokkan.md'), old);
+    expect(install(home)).toContain(`Removed ${old}`);
+    expect(() => lstatSync(old)).toThrow();
+    const other = newHome();
+    const theirs = path.join(other, '.claude/commands/mokkan.md');
+    mkdirSync(path.dirname(theirs), { recursive: true });
+    writeFileSync(theirs, 'my own command\n');
+    install(other);
+    expect(readFileSync(theirs, 'utf8')).toBe('my own command\n');
   });
 
   it('leaves a pre-existing file or directory that is not its own untouched', () => {

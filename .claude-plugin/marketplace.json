@@ -8,7 +8,7 @@
     {
       "name": "mokkan",
       "source": "./claude-plugin",
-      "description": "Cross-session reminders synced through api.mokkan.dev, with hooks that surface due reminders."
+      "description": "Cross-session reminders synced through api.mokkan.dev: a live pane with TODOs, Reminders and Archived tabs, toggled by /mokkan."
     }
   ]
 }
