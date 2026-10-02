@@ -1,6 +1,6 @@
 {
   "name": "mokkan",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Cross-session reminders: /mokkan toggles a live pane with your TODOs, Reminders and Archived tabs, /mokkan <command> runs push, in, edit, ack, done and the rest at once, and the /mokkan:mokkan skill lets Claude do it for you.",
   "author": {
     "name": "Victor Benetatos"
