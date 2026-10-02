@@ -121,7 +121,7 @@ describe('credits (client + CLI against the fake server)', () => {
     it('--json prints the raw response', async () => {
       server.withAccount();
       const res = await run(['buy', '--json', '--no-open']);
-      expect(res.stdout).toBe('{"url":"https://checkout.stripe.com/c/pay/cs_test_fake","session_id":"cs_test_fake"}\n');
+      expect(res.stdout).toBe('{"url":"https://checkout.stripe.com/c/pay/cs_test_fake","session_id":"cs_test_fake","opened":false}\n');
     });
 
     it('an unknown pack is reported and exits 1', async () => {

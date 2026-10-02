@@ -65,11 +65,13 @@ export async function buyCommand(ctx: Ctx): Promise<number> {
   }
   const wanted = ctx.flags['no-open'] !== true;
   const trusted = isTrustedCheckoutUrl(res.url);
+  let opened = false;
   if (wanted && trusted) {
-    try { ctx.io.openUrl?.(res.url); } catch { /* the URL is printed anyway */ }
+    try { opened = ctx.io.openUrl?.(res.url) ?? false; } catch { /* the URL is printed anyway */ }
   }
   if (ctx.json) {
-    ctx.io.stdout(`${JSON.stringify(res)}\n`);
+    // `opened`: whether a browser opener was started, so the pane can say so.
+    ctx.io.stdout(`${JSON.stringify({ ...res, opened })}\n`);
     return 0;
   }
   let how: string;

@@ -883,14 +883,15 @@ async function buyCommand(ctx) {
   }
   const wanted = ctx.flags["no-open"] !== true;
   const trusted = isTrustedCheckoutUrl(res.url);
+  let opened = false;
   if (wanted && trusted) {
     try {
-      ctx.io.openUrl?.(res.url);
+      opened = ctx.io.openUrl?.(res.url) ?? false;
     } catch {
     }
   }
   if (ctx.json) {
-    ctx.io.stdout(`${JSON.stringify(res)}
+    ctx.io.stdout(`${JSON.stringify({ ...res, opened })}
 `);
     return 0;
   }
@@ -1171,8 +1172,8 @@ function dashboardLines(state, size, now) {
   const items = rowsOf(state);
   const list = [];
   if (items.length === 0) {
-    const empty = state.tab === "done" ? "Nothing finished yet." : "Nothing on the stack. p adds a todo, i a reminder.";
-    list.push(line([part(` ${empty}`, "dim")], [], columns));
+    const empty = state.tab === "done" ? ["Nothing finished yet.", "d marks a stack row done."] : ["Nothing on the stack. t adds a todo, r a reminder."];
+    for (const text of empty) list.push(line([part(` ${text}`, "dim")], [], columns));
   } else {
     const numberWidth = String(items.length).length;
     for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
@@ -1192,21 +1193,22 @@ function header(state, columns, now) {
   const left = [part(" mokkan", "bold"), part(` \xB7 ${clean(state.email)}`)];
   const c = state.credits;
   if (typeof c === "number" && Number.isFinite(c)) {
-    left.push(c <= 0 ? part(` \xB7 ${c} credits \xB7 buy`, "red") : c < LOW_CREDITS ? part(` \xB7 ${c} credits \xB7 low`, "yellow") : part(` \xB7 ${c} credits`, "dim"));
+    const credits = ` \xB7 ${c} ${Math.abs(c) === 1 ? "credit" : "credits"}`;
+    left.push(c <= 0 ? part(`${credits} \xB7 buy`, "red") : c < LOW_CREDITS ? part(`${credits} \xB7 low`, "yellow") : part(credits, "dim"));
   }
   left.push(part(` \xB7 ${state.host}`));
   return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
 }
 function status(state, now, maxWidth) {
-  const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
+  const age = state.fetchedAt ? `synced ${state.fetchedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false })}` : null;
   if (state.refreshing) return part("syncing\u2026", "dim");
   if (state.error) {
-    const suffix = age ? ` \xB7 ${age} old` : "";
+    const suffix = age ? ` \xB7 ${age}` : "";
     if (state.error.kind === "offline") return part(`offline${suffix}`, "yellow");
     const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth("error: ") - displayWidth(suffix)));
     return part(`error: ${msg}${suffix}`, "red");
   }
-  return part(age ? `synced ${age}` : "loading\u2026", "dim");
+  return part(age ?? "loading\u2026", "dim");
 }
 function tabs(state, columns) {
   const labels = [["stack", `Stack ${state.reminders.length}`], ["done", state.done ? `Done ${state.done.length}` : "Done"]];
@@ -1253,11 +1255,11 @@ function row(r, index, numberWidth, selected, columns, now) {
 }
 function detail(r, now) {
   const ago = (at) => `${formatAge(now.getTime() - Date.parse(at))} ago`;
-  const pushed = `pushed ${ago(r.created_at)}`;
-  if (r.state === "done") return r.done_at ? `done ${ago(r.done_at)} \xB7 ${pushed}` : `done \xB7 ${pushed}`;
-  const parts = [isTodo(r) ? "todo" : "reminder", pushed];
-  if (r.delivered_at) parts.push(`seen ${ago(r.delivered_at)}`);
-  if (r.acknowledged_at) parts.push("acked");
+  const added = `added ${ago(r.created_at)}`;
+  if (r.state === "done") return r.done_at ? `done ${ago(r.done_at)} \xB7 ${added}` : `done \xB7 ${added}`;
+  const parts = [isTodo(r) ? "todo" : "reminder", added];
+  if (r.delivered_at) parts.push(`shown ${ago(r.delivered_at)}`);
+  if (r.acknowledged_at) parts.push(`acked ${ago(r.acknowledged_at)}`);
   return parts.join(" \xB7 ");
 }
 function footer(state, columns) {
@@ -1268,12 +1270,14 @@ function footer(state, columns) {
     return [line([part(label, "bold"), part(text)], [], columns), line([part(` ${m.hint}`, "dim")], [], columns)];
   }
   if (m.kind === "confirm") {
-    const room = columns - displayWidth(` ${m.action} ""?  y: yes  n: no`);
-    return [line([part(` ${m.action} "${fit(clean(m.text), room)}"?  y: yes  n: no`, "yellow")], [], columns), ""];
+    const [before, after, yes] = m.action === "done" ? ["mark ", " done", "done"] : m.action === "undone" ? ["reopen ", "", "reopen"] : ["pop ", "", "pop"];
+    const room = columns - displayWidth(` ${before}""${after}?  y: ${yes}  n: keep`);
+    return [line([part(` ${before}"${fit(clean(m.text), room)}"${after}?  y: ${yes}  n: keep`, "yellow")], [], columns), ""];
   }
+  const inDone = state.tab === "done";
   return [
-    line([part(" p todo \xB7 i remind \xB7 e edit \xB7 t time \xB7 a done \xB7 k ack \xB7 s view", "dim")], [], columns),
-    line([part(" x pop \xB7 d dequeue \xB7 K ack all \xB7 r refresh \xB7 b buy \xB7 q quit \xB7 \u2191\u2193 1-9 move", "dim")], [], columns)
+    line([part(` t todo \xB7 r reminder \xB7 e edit \xB7 w when \xB7 d ${inDone ? "reopen" : "done"} \xB7 a ack \xB7 v ${inDone ? "view stack" : "view done"} \xB7 q quit`, "dim")], [], columns),
+    line([part(" p pop top \xB7 o pop oldest \xB7 A ack all \xB7 s sync \xB7 b buy \xB7 \u2191\u2193 1-9 move", "dim")], [], columns)
   ];
 }
 function loginLines(state, size) {
@@ -1408,26 +1412,27 @@ var TuiApp = class {
     if (key.name === "home") return this.move(-Infinity);
     if (key.name === "end") return this.move(Infinity);
     if (ch >= "1" && ch <= "9") return this.jump(Number(ch) - 1);
-    if (key.name === "tab" || ch === "s") return this.switchView();
-    if (ch === "r") return this.refresh();
-    if (ch === "p") return this.startInput("push", "todo", "text (1 credit) \xB7 Enter to push \xB7 Esc to cancel");
-    if (ch === "i") return this.startInput("in", "remind", "2h call the bank (1 credit + 1 reserved) \xB7 Enter to schedule \xB7 Esc to cancel");
+    if (key.name === "tab" || ch === "v") return this.switchView();
+    if (ch === "s") return this.refresh();
+    if (ch === "t") return this.startInput("push", "new todo", "what to remember \xB7 1 credit \xB7 Enter to add \xB7 Esc to cancel");
+    if (ch === "r") return this.startInput("in", "new reminder", "2h call the bank \xB7 1 credit, +1 held for the email \xB7 Enter to schedule \xB7 Esc to cancel");
     if (ch === "e") {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (every 3rd edit costs 1) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
+      return this.startInput("edit", `edit [${shortId(r.id)}]`, "Enter to save (every 3rd edit costs 1 credit) \xB7 Esc to cancel", { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
-    if (ch === "t") {
+    if (ch === "w") {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput("time", `time [${shortId(r.id)}]`, "30m, 2h, 1d or clear \xB7 Enter to save (every 3rd edit costs 1) \xB7 Esc to cancel", { targetId: r.id, version: this.state.version });
+      return this.startInput("time", `due in [${shortId(r.id)}]`, "30m, 2h, 1d, or clear to make it a todo \xB7 Enter to save (every 3rd edit costs 1 credit) \xB7 Esc to cancel", { targetId: r.id, version: this.state.version });
     }
-    if (ch === "a") return this.toggleDone();
-    if (ch === "k") return this.ackSelected();
-    if (ch === "K") return this.ackAll();
-    if (ch === "x") return this.startConfirm("pop");
-    if (ch === "d") return this.startConfirm("dequeue");
+    if (key.name === "enter") return this.confirmDone();
+    if (ch === "d") return this.toggleDone();
+    if (ch === "a") return this.ackSelected();
+    if (ch === "A") return this.ackAll();
+    if (ch === "p") return this.startConfirm("pop");
+    if (ch === "o") return this.startConfirm("dequeue");
     if (ch === "b") return this.buy();
     return Promise.resolve();
   }
@@ -1540,7 +1545,7 @@ var TuiApp = class {
   selectedReminder(inDone = false) {
     const s = this.state;
     if (s.tab === "done" && !inDone) {
-      this.say("Press s for the stack to change reminders.", "yellow");
+      this.say("Press v for the stack to change reminders.", "yellow");
       return null;
     }
     const r = this.rows()[s.selected];
@@ -1580,7 +1585,7 @@ var TuiApp = class {
       case "push":
         return this.action(async () => {
           const res = await this.client.push(text);
-          this.say(`Pushed [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
         });
       case "in": {
         const space = text.search(/\s/);
@@ -1685,19 +1690,30 @@ var TuiApp = class {
       return Promise.resolve();
     }
     const version = mode.version ?? void 0;
+    if (mode.action === "done" || mode.action === "undone") return this.setDone(mode.targetId, mode.action === "done", version);
     return this.action(async () => {
       const res = mode.action === "pop" ? await this.client.pop(version) : await this.client.dequeue(version);
-      this.say(`${mode.action === "pop" ? "Popped" : "Dequeued"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
+      this.say(`Popped [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
     });
+  }
+  /** Enter: asks before `a` would finish the selected reminder, or in the done view reopen it. */
+  confirmDone() {
+    const r = this.selectedReminder(true);
+    if (!r) return Promise.resolve();
+    this.state.message = null;
+    this.state.mode = { kind: "confirm", action: this.state.tab === "done" ? "undone" : "done", text: r.text, version: this.state.version, targetId: r.id };
+    this.changed();
+    return Promise.resolve();
   }
   /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
   toggleDone() {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
-    const done = this.state.tab !== "done";
-    const version = this.state.version ?? void 0;
+    return this.setDone(r.id, this.state.tab !== "done", this.state.version ?? void 0);
+  }
+  setDone(id, done, version) {
     return this.action(async () => {
-      const res = await this.client.setDone(r.id, done, version);
+      const res = await this.client.setDone(id, done, version);
       this.say(`${done ? "Done" : "Reopened"} [${shortId(res.reminder.id)}] ${res.reminder.text}`, "green");
     });
   }

@@ -34,15 +34,18 @@ function fakeCli(on: On) {
   const clock = mock.clock(on, { now: NOW })
   const panes: { id: string }[] = []
   const toasts: string[] = []
+  const toastMs: (number | undefined)[] = []
+  const commands: Record<string, unknown>[] = []
+  let stats = 0
   on('ui.open', (_, e) => { if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
   on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
-  on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); return { value: undefined } })
+  on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); toastMs.push((e as { timeoutMs?: number }).timeoutMs); return { value: undefined } })
   on('ui.focus', () => ({}))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }))
+  on('command.register', (_, e) => { commands.push({ ...e }); return { value: { command: e.name } } })
+  on('fs.stat', () => { stats++; return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } } })
   const ran: string[][] = []
   const envs: Record<string, string>[] = []
-  const session = { loggedIn: true, offline: false, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number> }
+  const session = { loggedIn: true, offline: false, opens: true, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number> }
   on('process.run', async (_, e) => {
     ran.push([...e.argv])
     envs.push(e.init?.env ?? {})
@@ -60,12 +63,13 @@ function fakeCli(on: On) {
     if (cmd === 'list') return OK(JSON.stringify({ version: 1, reminders: stack }))
     if (cmd === 'done' && e.argv.length === 4) return OK(JSON.stringify({ version: 1, reminders: session.done })) // bare `done --json`: the history
     if (cmd === 'balance') return OK(BALANCE)
+    if (cmd === 'buy') return OK(JSON.stringify({ url: 'https://checkout.stripe.com/c/pay/cs_x', session_id: 'cs_x', opened: session.opens }))
     if (cmd === 'done') return OK(JSON.stringify({ done: [e.argv[3]] }))
     if (cmd === 'undone') return OK(JSON.stringify({ reopened: [e.argv[3]] }))
     if (cmd === 'push') stack.unshift(row('f6f6f6f6-0000-4000-8000-000000000006', e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, envs, clock, toasts, panes }
+  return { ran, session, envs, clock, toasts, toastMs, commands, panes, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -86,7 +90,7 @@ test('todos and reminders read apart: glyph, color and time column; the selected
     expect(await shows(ui, '· 42 credits')).toBe(true)
     expect((await ui.find({ key: 'tab-stack' }))?.text).toBe('Stack 4')
     expect((await ui.find({ key: 'tab-done' }))?.text).toBe('Done 1')
-    expect(await shows(ui, 'synced 0s')).toBe(true)
+    expect(await shows(ui, /^ synced \d\d:\d\d$/)).toBe(true) // the clock time of the last sync, on the bottom line
 
     // The Button draws `1: `; the text carries no digit of its own.
     const first = await ui.find({ key: `row-${A}` })
@@ -104,26 +108,25 @@ test('todos and reminders read apart: glyph, color and time column; the selected
 
     await ui.press({ key: `row-${A}` })
     expect(await shows(ui, '▸')).toBe(true)
-    expect(await shows(ui, /^ +todo · pushed 3h ago · seen 1h ago$/)).toBe(true)
+    expect(await shows(ui, /^ +todo · added 3h ago · shown 1h ago$/)).toBe(true)
     await ui.press({ key: `row-${B}` })
-    expect(await shows(ui, /^ +reminder · pushed 3h ago$/)).toBe(true)
+    expect(await shows(ui, /^ +reminder · added 3h ago$/)).toBe(true)
 
     await ui.press({ key: 'view' })
     await ui.press({ key: `row-${E}` })
     expect(await shows(ui, '✓')).toBe(true)
-    expect(await shows(ui, /^ +done 2h ago · pushed 1d ago$/)).toBe(true)
+    expect(await shows(ui, /^ +done 2h ago · added 1d ago$/)).toBe(true)
     await ui.press({ key: 'tab-stack' })
     await ui.unmount()
   }
   expect(ran.some(a => a[2] === 'done' && a.length > 4)).toBe(false) // selecting never finishes
 })
 
-test('a toggles done on the selected one, and in the done view reopens it; k acknowledges', async ($, on) => {
+test('d toggles done on the selected one, and in the done view reopens it; a acknowledges', async ($, on) => {
   const { ran, clock } = fakeCli(on)
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
 
-  await ui.press({ key: `row-${A}` })
   await ui.press({ key: `row-${A}` })
   expect(ran.some(a => a[2] === 'done' && a[3] === A)).toBe(false)
   await ui.press({ key: 'done' })
@@ -140,7 +143,37 @@ test('a toggles done on the selected one, and in the done view reopens it; k ack
   await ui.press({ key: `row-${B}` })
   await ui.press({ key: 'ack' })
   expect(ran.some(a => a[2] === 'ack' && a[3] === B)).toBe(true)
-  expect(await status(ui)).toBe('acknowledged · call the bank')
+  expect(await status(ui)).toBe('acked · call the bank')
+  await ui.unmount()
+})
+
+test('Enter on the selected row asks to mark it done, and in the done view to reopen it', async ($, on) => {
+  const { ran, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  await ui.press({ key: `row-${A}` }) // selects
+  expect(await ui.find({ key: 'yes' })).toBeUndefined()
+  await ui.press({ key: `row-${A}` }) // Enter on it: asks
+  expect(await shows(ui, 'mark "renew the TLS cert" done?')).toBe(true)
+  expect((await ui.find({ key: 'yes' }))?.text).toBe('done')
+  expect((await ui.find({ key: 'no' }))?.text).toBe('keep')
+  await ui.press({ key: 'no' })
+  expect(ran.some(a => a[2] === 'done' && a[3] === A)).toBe(false)
+  await ui.press({ key: `row-${A}` })
+  await ui.press({ key: 'yes' })
+  expect(ran.some(a => a[2] === 'done' && a[3] === A)).toBe(true)
+  expect(await status(ui)).toBe('done · renew the TLS cert')
+  expect(await ui.find({ key: 'yes' })).toBeUndefined()
+
+  await ui.press({ key: 'view' })
+  await ui.press({ key: `row-${E}` })
+  await ui.press({ key: `row-${E}` })
+  expect(await shows(ui, 'reopen "renew the domain"?')).toBe(true)
+  expect((await ui.find({ key: 'yes' }))?.text).toBe('reopen')
+  await ui.press({ key: 'yes' })
+  expect(ran.some(a => a[2] === 'undone' && a[3] === E)).toBe(true)
+  expect(await status(ui)).toBe('reopened · renew the domain')
   await ui.unmount()
 })
 
@@ -151,15 +184,15 @@ test('push and edit run the CLI; the field label is not its submit label', async
 
   await ui.press({ key: 'push' })
   const field = await ui.find({ key: 'field' })
-  expect(field?.props.label).toBe('todo')
+  expect(field?.props.label).toBe('new todo')
   expect(field?.props.submitLabel).toBe('add')
   await ui.input({ key: 'field', text: 'milk' })
   expect(ran.some(a => a[2] === 'push' && a[3] === 'milk')).toBe(true)
-  expect(await status(ui)).toBe('pushed · milk')
+  expect(await status(ui)).toBe('added · milk')
   expect(await ui.find({ key: 'field' })).toBeUndefined()
 
   await ui.press({ key: 'edit' }) // nothing selected yet
-  expect(await status(ui)).toBe('error: pick a row first (1-9 or Tab)')
+  expect(await status(ui)).toBe('select a row first (its number or ↑↓)')
   await ui.press({ key: `row-${A}` })
   expect(await status(ui)).toBeFalsy() // the next key cleared it
   await ui.press({ key: 'edit' })
@@ -177,8 +210,8 @@ test('errors show on the status line in field mode, and the field keeps what was
   await ui.press({ key: 'in' })
   await ui.input({ key: 'field', text: 'soon call the bank' })
   const bad = await status(ui)
-  expect(bad).toBe('error: duration first: 2h call the bank')
-  expect(bad!.length).toBeLessThanOrEqual(44)
+  expect(bad).toBe('error: start with a duration: 2h call the bank')
+  expect((await ui.find({ type: 'Text', text: bad! }))?.props.wrap).toBe('wrap') // an error wraps to the width instead of being cut
   expect((await ui.find({ key: 'status' }))?.props).toBeDefined()
   expect(await ui.find({ type: 'Text', text: bad! })).toMatchObject({ props: { color: 'red' } })
   expect((await ui.find({ key: 'field' }))?.props.value).toBe('soon call the bank')
@@ -193,7 +226,7 @@ test('errors show on the status line in field mode, and the field keeps what was
   delete session.fail.in
   await ui.input({ key: 'field', text: '2h call the bank' })
   expect(await ui.find({ key: 'field' })).toBeUndefined()
-  expect(await status(ui)).toBe('scheduled in 2h')
+  expect(await status(ui)).toBe('scheduled in 2h · call the bank')
 
   // A message clears itself after 15 s.
   await clock.advance(15_000)
@@ -202,7 +235,7 @@ test('errors show on the status line in field mode, and the field keeps what was
   await ui.press({ key: `row-${B}` })
   await ui.press({ key: 'time' })
   await ui.input({ key: 'field', text: 'later' })
-  expect(await status(ui)).toBe('error: a duration like 2h, or clear')
+  expect(await status(ui)).toBe('error: type a duration like 2h, or clear')
   expect((await ui.find({ key: 'field' }))?.props.value).toBe('later')
   await ui.unmount()
 })
@@ -240,12 +273,15 @@ test('dequeue and logout confirms name their target; an empty stack answers with
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
 
   await ui.press({ key: 'dequeue' })
-  expect(await shows(ui, 'dequeue "water the plants"?')).toBe(true) // the bottom one; scheduled ones are not taken
+  expect(await shows(ui, 'pop "water the plants"?')).toBe(true) // the bottom one; scheduled ones are not taken
+  expect((await ui.find({ key: 'yes' }))?.text).toBe('pop') // the answers name their outcome
+  expect((await ui.find({ key: 'no' }))?.text).toBe('keep')
   await ui.press({ key: 'no' })
   expect(ran.some(a => a[2] === 'dequeue')).toBe(false)
 
   await ui.press({ key: 'logout' })
   expect(await shows(ui, 'log out vic@example.com?')).toBe(true)
+  expect((await ui.find({ key: 'yes' }))?.text).toBe('log out')
   await ui.press({ key: 'no' })
 
   session.stack = [row(C, 'ask Maria re notes', 'scheduled', 40)]
@@ -256,7 +292,7 @@ test('dequeue and logout confirms name their target; an empty stack answers with
   await ui.unmount()
 })
 
-test('every row is reachable: no cut-off, digits on the first nine, the focus ring selects any row', async ($, on) => {
+test('every row is reachable: no cut-off, digits on the first nine, the focus ring selects any row it lands on', async ($, on) => {
   const { session, clock } = fakeCli(on)
   session.stack = Array.from({ length: 14 }, (_, i) => row(`0000000${i.toString(16)}-0000-4000-8000-000000000000`, `todo number ${i + 1}`, 'due', null))
   await opened($, clock)
@@ -268,11 +304,50 @@ test('every row is reachable: no cut-off, digits on the first nine, the focus ri
 
   const last = rows[13]!.key!
   const ring = await $.ui.focus({ component: 'Pane', requestId: 'mokkan', plugin: 'mokkan', element: last, origin: { kind: 'person' } })
-  expect(ring.deny).toBeDefined() // the row is selected, but the engine's inverted focus ring never lands on it
+  expect(ring.deny).toBeUndefined() // the ring lands on the row, and the row is selected
   expect(await ui.find({ type: 'Text', text: '▸ ' })).toBeDefined()
-  expect(await shows(ui, /^ +todo · pushed/)).toBe(true)
+  expect(await shows(ui, /^ +todo · added/)).toBe(true)
   await ui.press({ key: rows[12]!.key! }) // a click on a row past the ninth
-  expect(await shows(ui, /^ +todo · pushed/)).toBe(true)
+  expect(await shows(ui, /^ +todo · added/)).toBe(true)
+
+  // Rows 10+ show their number and are typed as two digits; 0 joins the keys for 10, 20.
+  expect(await shows(ui, '14:')).toBe(true)
+  const selected = async () => {
+    const all = await ui.findAll({})
+    const at = all.findIndex(x => x.text === '▸ ')
+    return all.slice(at).find(x => x.key?.startsWith('row-'))?.text
+  }
+  await ui.press({ key: rows[0]!.key! }) // 1
+  expect(await selected()).toBe('todo number 1')
+  await ui.press({ key: 'zero' }) // then 0: row 10
+  expect(await selected()).toBe('todo number 10')
+  await ui.press({ key: rows[0]!.key! }); await ui.press({ key: rows[3]!.key! }) // 1, 4: row 14
+  expect(await selected()).toBe('todo number 14')
+  await ui.press({ key: rows[0]!.key! }); await clock.advance(1500); await ui.press({ key: rows[2]!.key! }) // 1, a pause, 3: row 3
+  expect(await selected()).toBe('todo number 3')
+  await ui.press({ key: 'zero' }) // a lone 0 explains itself
+  expect(await status(ui)).toBe('type 1 then 0 for row 10')
+
+  // The selected row's digit asks once no second digit follows; a second one moves on without asking.
+  await ui.press({ key: rows[12]!.key! }) // row 13, selected
+  await ui.press({ key: rows[12]!.key! }) // pressed again: asks at once, having no digit
+  expect(await shows(ui, 'mark "todo number 13" done?')).toBe(true)
+  await ui.press({ key: 'no' })
+  await ui.press({ key: rows[0]!.key! }) // 1: selects row 1
+  await clock.advance(1500)
+  expect(await ui.find({ key: 'yes' })).toBeUndefined()
+  await ui.press({ key: rows[0]!.key! }); await ui.press({ key: rows[1]!.key! }) // 1, 2: row 12, no question
+  await clock.advance(1500)
+  expect(await selected()).toBe('todo number 12')
+  expect(await ui.find({ key: 'yes' })).toBeUndefined()
+  await ui.press({ key: rows[0]!.key! }); await ui.press({ key: rows[0]!.key! }) // 1, then 1 again on its own
+  expect(await ui.find({ key: 'yes' })).toBeUndefined() // row 11 selected, nothing asked yet
+  expect(await selected()).toBe('todo number 11')
+  await ui.press({ key: rows[0]!.key! }) // 1: row 1
+  await clock.advance(1500)
+  await ui.press({ key: rows[0]!.key! }) // 1 alone on the selected row 1
+  await clock.advance(1000)
+  expect(await shows(ui, 'mark "todo number 1" done?')).toBe(true)
   await ui.unmount()
 })
 
@@ -285,9 +360,9 @@ test('rows fit the body by display width: wide glyphs count 2, an emoji sequence
   ]
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
-  // 44 columns less `▸ □ ` and `1: ` leaves 37 cells.
-  expect((await ui.find({ key: `row-${A}` }))?.text).toBe(`${'x'.repeat(35)}…`)
-  expect((await ui.find({ key: `row-${B}` }))?.text).toBe(`${'日'.repeat(18)}…`)
+  // 44 columns less the border, `▸ □ ` and `1: ` leaves 35 cells.
+  expect((await ui.find({ key: `row-${A}` }))?.text).toBe(`${'x'.repeat(34)}…`)
+  expect((await ui.find({ key: `row-${B}` }))?.text).toBe(`${'日'.repeat(17)}…`)
   expect((await ui.find({ key: `row-${C}` }))?.text).toBe('short ☕')
   await ui.unmount()
 })
@@ -297,7 +372,7 @@ test('unfocused, the legend folds to one hint line; the list and the status line
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE, props: { ...PANE.props, isFocused: false } })
   expect(await ui.find({ key: 'push' })).toBeUndefined()
-  expect(await shows(ui, 'ctrl+x tab to act')).toBe(true)
+  expect(await shows(ui, 'ctrl+x tab to use keys')).toBe(true)
   expect(await ui.find({ key: `row-${A}` })).toBeDefined()
   expect(await ui.find({ key: 'status' })).toBeDefined()
   await ui.unmount()
@@ -308,18 +383,52 @@ test('the legend: every key in `mokkan ui` footer style, wrapped to the width; l
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
   const keys = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k && !k.startsWith('row-') && !k.startsWith('tab-'))
-  expect(await keys()).toEqual(['push', 'in', 'edit', 'time', 'done', 'ack', 'view', 'logout', 'pop', 'dequeue', 'refresh', 'close'])
-  expect(await ui.find({ key: 'legend-2' })).toBeDefined() // three lines at 44 columns
-  expect(await ui.find({ key: 'legend-3' })).toBeUndefined()
+  expect(await keys()).toEqual(['push', 'in', 'edit', 'time', 'done', 'ack', 'pop', 'dequeue', 'view', 'refresh', 'buy', 'logout', 'help', 'close'])
+  const labels = async () => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey && !b.key?.startsWith('row-')).map(b => b.text)
+  expect(await labels()).toEqual(['todo', 'reminder', 'edit', 'when', 'done', 'ack', 'pop top', 'pop oldest', 'view done', 'sync', 'buy', 'log out', 'help', 'close'])
+  const hotkeys = async () => (await ui.findAll({ type: 'Button' })).filter(b => b.props.hotkey && !b.key?.startsWith('row-')).map(b => b.props.hotkey)
+  expect(await hotkeys()).toEqual(['t', 'r', 'e', 'w', 'd', 'a', 'p', 'o', 'v', 's', 'b', 'l', 'h', 'q']) // each its label's first letter
+  await ui.press({ key: 'view' })
+  expect(await labels()).toContain('reopen') // the done view names what d and v do there
+  expect(await labels()).toContain('view stack')
+  expect(await shows(ui, 'd marks a stack row done.')).toBe(false) // the done list has a row
+  await ui.press({ key: 'view' })
+  // A line per group (add, the selected row, the stack, the rest), the last wrapped: five lines at 44 columns, 42 inside the border.
+  const line = async (i: number) => (await ui.find({ key: `legend-${i}` }))?.text.replace(/\s+/g, ' ').trim()
+  expect(await line(0)).toBe('todo · reminder')
+  expect(await line(2)).toBe('pop top · pop oldest')
+  expect(await ui.find({ key: 'legend-4' })).toBeDefined()
+  expect(await ui.find({ key: 'legend-5' })).toBeUndefined()
 
   session.loggedIn = false
   await ui.press({ key: 'refresh' })
   expect(await ui.find({ key: `row-${A}` })).toBeUndefined()
   expect(await shows(ui, 'Not logged in.')).toBe(true)
-  expect(await shows(ui, 'l logs in, g registers.')).toBe(true)
-  expect(await shows(ui, 'logged out')).toBe(true)
+  expect(await shows(ui, 'l logs in, r registers.')).toBe(true)
+  expect(await shows(ui, 'logged out')).toBe(false) // the body says it once
+  expect(await shows(ui, /synced/)).toBe(false) // no sync state while logged out
   expect(await shows(ui, /credits/)).toBe(false)
-  expect(await keys()).toEqual(['login', 'register', 'refresh', 'close'])
+  expect(await keys()).toEqual(['login', 'register', 'refresh', 'help', 'close'])
+  await ui.unmount()
+})
+
+test('h opens the help in place of the list and the keys shrink to back and close; the sync state is the last line', async ($, on) => {
+  const { clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  const texts = async () => (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  expect((await texts()).at(-1)).toMatch(/^ synced \d\d:\d\d$/) // at the bottom, clear of the engine's close mark
+
+  await ui.press({ key: 'help' })
+  expect(await shows(ui, /every Claude Code, Codex and terminal session shares/)).toBe(true)
+  expect(await shows(ui, /plus 1 held for its email and given back if you ack it first/)).toBe(true)
+  expect(await ui.find({ key: `row-${A}` })).toBeUndefined()
+  expect(await ui.find({ key: 'tab-stack' })).toBeUndefined()
+  const keys = (await ui.findAll({ type: 'Button' })).map(b => [b.key, b.text])
+  expect(keys).toEqual([['help', 'back'], ['close', 'close']])
+
+  await ui.press({ key: 'help' })
+  expect(await ui.find({ key: `row-${A}` })).toBeDefined()
   await ui.unmount()
 })
 
@@ -329,13 +438,13 @@ test('without an Input (mobile) the pane offers no key it cannot take', async ($
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'mobile', ...PANE })
   const keys = async () => (await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k && !k.startsWith('row-') && !k.startsWith('tab-'))
-  expect(await keys()).toEqual(['done', 'ack', 'view', 'logout', 'pop', 'dequeue', 'refresh', 'close'])
+  expect(await keys()).toEqual(['done', 'ack', 'pop', 'dequeue', 'view', 'refresh', 'logout', 'help', 'close'])
   expect(await shows(ui, 'Nothing on the stack.')).toBe(true)
 
   session.loggedIn = false
   await ui.press({ key: 'refresh' })
   expect(await shows(ui, 'Log in from a terminal: mokkan login')).toBe(true)
-  expect(await keys()).toEqual(['refresh', 'close'])
+  expect(await keys()).toEqual(['refresh', 'help', 'close'])
   await ui.unmount()
 })
 
@@ -348,7 +457,7 @@ test('offline keeps the last list, marked stale; overlapping refreshes keep the 
   session.offline = true
   await ui.press({ key: 'refresh' })
   expect(await ui.find({ key: `row-${A}` })).toBeDefined()
-  expect((await ui.find({ type: 'Text', text: 'offline · 3m old' }))?.props.color).toBe('yellow')
+  expect((await ui.find({ type: 'Text', text: /^ offline · synced \d\d:\d\d$/ }))?.props.color).toBe('yellow')
   expect(await shows(ui, '· 42 credits')).toBe(true)
 
   session.offline = false
@@ -369,7 +478,7 @@ test('offline keeps the last list, marked stale; overlapping refreshes keep the 
 })
 
 test('toasts: a timed reminder that fires, never a todo just pushed', async ($, on) => {
-  const { session, clock, toasts } = fakeCli(on)
+  const { session, clock, toasts, toastMs } = fakeCli(on)
   await opened($, clock)
   expect(toasts).toEqual([])
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
@@ -383,6 +492,7 @@ test('toasts: a timed reminder that fires, never a todo just pushed', async ($, 
   await ui.press({ key: 'refresh' })
   expect(toasts).toHaveLength(1)
   expect(toasts[0]).toContain('ask Maria re notes')
+  expect(toastMs[0]).toBe(15_000)
   await ui.unmount()
 })
 
@@ -397,6 +507,53 @@ test('the minute timer refreshes only while the pane is open', async ($, on) => 
   expect(lists()).toBe(1)
   await clock.advance(60_000)
   expect(lists()).toBe(2)
+})
+
+test('/mokkan-pane runs mid-turn, and the CLI path is looked up once', async ($, on) => {
+  const { clock, commands, stats } = fakeCli(on)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(commands).toEqual([expect.objectContaining({ name: 'mokkan-pane', immediate: true })])
+  await opened($, clock)
+  await clock.advance(60_000)
+  expect(stats()).toBe(1)
+})
+
+test('a /clear, /resume or /branch refreshes the open pane, and only an open one', async ($, on) => {
+  const { ran, clock } = fakeCli(on)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('classic.SessionStart', () => ({}))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const lists = () => ran.filter(a => a[2] === 'list').length
+  await $.classic.SessionStart({ source: 'clear' })
+  await clock.settle()
+  expect(lists()).toBe(0)
+  await opened($, clock)
+  expect(lists()).toBe(1)
+  for (const source of ['clear', 'resume', 'fork'] as const) await $.classic.SessionStart({ source })
+  await clock.settle()
+  expect(lists()).toBe(4)
+  await $.classic.SessionStart({ source: 'compact' })
+  await clock.settle()
+  expect(lists()).toBe(4)
+})
+
+test('b opens Stripe Checkout through the CLI, and says when it could not', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  expect((await ui.find({ key: 'buy' }))?.props.hotkey).toBe('b')
+  await ui.press({ key: 'buy' })
+  await clock.settle()
+  expect(ran.some(a => a[2] === 'buy' && a.includes('--json'))).toBe(true)
+  expect(await status(ui)).toBe('Opened Stripe Checkout in your browser; the balance updates after payment.')
+
+  session.opens = false
+  await clock.advance(15_000)
+  await ui.press({ key: 'buy' })
+  await clock.settle()
+  expect(await status(ui)).toBe('Could not open a browser here. Run: mokkan buy --no-open (prints the link).')
+  await ui.unmount()
 })
 
 test('`/mokkan-pane close` closes the pane', async ($, on) => {
@@ -462,7 +619,7 @@ test('an edit inside the hidden password resets it with an error instead of corr
   expect((await ui.find({ key: 'auth' }))?.props.value).toBe('•'.repeat(13))
   await ui.input({ key: 'auth', text: '••••x•••••••••', kind: 'change' }) // typed in the middle
   expect((await ui.find({ key: 'auth' }))?.props.value).toBe('')
-  expect(await status(ui)).toBe('error: edits clear the password; retype it')
+  expect(await status(ui)).toBe('error: editing inside the password erased it; type it again')
   await ui.unmount()
 })
 

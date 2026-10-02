@@ -120,27 +120,29 @@ export class TuiApp {
     if (key.name === 'home') return this.move(-Infinity);
     if (key.name === 'end') return this.move(Infinity);
     if (ch >= '1' && ch <= '9') return this.jump(Number(ch) - 1);
-    if (key.name === 'tab' || ch === 's') return this.switchView();
-    if (ch === 'r') return this.refresh();
-    if (ch === 'p') return this.startInput('push', 'todo', 'text (1 credit) · Enter to push · Esc to cancel');
-    if (ch === 'i') return this.startInput('in', 'remind', '2h call the bank (1 credit + 1 reserved) · Enter to schedule · Esc to cancel');
+    // Each key is its label's first letter, as in the Claude Code pane.
+    if (key.name === 'tab' || ch === 'v') return this.switchView();
+    if (ch === 's') return this.refresh();
+    if (ch === 't') return this.startInput('push', 'new todo', 'what to remember · 1 credit · Enter to add · Esc to cancel');
+    if (ch === 'r') return this.startInput('in', 'new reminder', '2h call the bank · 1 credit, +1 held for the email · Enter to schedule · Esc to cancel');
     if (ch === 'e') {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
       // Control characters from the server never reach the input line; Enter without changes stays "Unchanged."
       const text = cleanText(r.text, Number.MAX_SAFE_INTEGER);
-      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (every 3rd edit costs 1) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
+      return this.startInput('edit', `edit [${shortId(r.id)}]`, 'Enter to save (every 3rd edit costs 1 credit) · Esc to cancel', { buffer: text, targetId: r.id, originalText: text, version: this.state.version });
     }
-    if (ch === 't') {
+    if (ch === 'w') {
       const r = this.selectedReminder();
       if (!r) return Promise.resolve();
-      return this.startInput('time', `time [${shortId(r.id)}]`, '30m, 2h, 1d or clear · Enter to save (every 3rd edit costs 1) · Esc to cancel', { targetId: r.id, version: this.state.version });
+      return this.startInput('time', `due in [${shortId(r.id)}]`, '30m, 2h, 1d, or clear to make it a todo · Enter to save (every 3rd edit costs 1 credit) · Esc to cancel', { targetId: r.id, version: this.state.version });
     }
-    if (ch === 'a') return this.toggleDone();
-    if (ch === 'k') return this.ackSelected();
-    if (ch === 'K') return this.ackAll();
-    if (ch === 'x') return this.startConfirm('pop');
-    if (ch === 'd') return this.startConfirm('dequeue');
+    if (key.name === 'enter') return this.confirmDone();
+    if (ch === 'd') return this.toggleDone();
+    if (ch === 'a') return this.ackSelected();
+    if (ch === 'A') return this.ackAll();
+    if (ch === 'p') return this.startConfirm('pop');
+    if (ch === 'o') return this.startConfirm('dequeue');
     if (ch === 'b') return this.buy();
     return Promise.resolve();
   }
@@ -258,7 +260,7 @@ export class TuiApp {
    */
   private selectedReminder(inDone = false): Reminder | null {
     const s = this.state;
-    if (s.tab === 'done' && !inDone) { this.say('Press s for the stack to change reminders.', 'yellow'); return null; }
+    if (s.tab === 'done' && !inDone) { this.say('Press v for the stack to change reminders.', 'yellow'); return null; }
     const r = this.rows()[s.selected];
     if (!r) { this.say('Nothing selected.', 'yellow'); return null; }
     return r;
@@ -288,7 +290,7 @@ export class TuiApp {
       case 'push':
         return this.action(async () => {
           const res = await this.client.push(text);
-          this.say(`Pushed [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+          this.say(`Added [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
         });
       case 'in': {
         const space = text.search(/\s/);
@@ -378,20 +380,33 @@ export class TuiApp {
     if (key.name === 'ctrl-c') return this.quit();
     if (key.name !== 'char' || key.ch !== 'y') { this.state.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
     const version = mode.version ?? undefined;
+    if (mode.action === 'done' || mode.action === 'undone') return this.setDone(mode.targetId!, mode.action === 'done', version);
     return this.action(async () => {
       const res = mode.action === 'pop' ? await this.client.pop(version) : await this.client.dequeue(version);
-      this.say(`${mode.action === 'pop' ? 'Popped' : 'Dequeued'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
+      this.say(`Popped [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
     });
+  }
+
+  /** Enter: asks before `a` would finish the selected reminder, or in the done view reopen it. */
+  private confirmDone(): Promise<void> {
+    const r = this.selectedReminder(true);
+    if (!r) return Promise.resolve();
+    this.state.message = null;
+    this.state.mode = { kind: 'confirm', action: this.state.tab === 'done' ? 'undone' : 'done', text: r.text, version: this.state.version, targetId: r.id };
+    this.changed();
+    return Promise.resolve();
   }
 
   /** `a`: finishes the selected reminder, or in the done view reopens it, as `mokkan done` / `mokkan undone` do. */
   private toggleDone(): Promise<void> {
     const r = this.selectedReminder(true);
     if (!r) return Promise.resolve();
-    const done = this.state.tab !== 'done';
-    const version = this.state.version ?? undefined;
+    return this.setDone(r.id, this.state.tab !== 'done', this.state.version ?? undefined);
+  }
+
+  private setDone(id: string, done: boolean, version: number | undefined): Promise<void> {
     return this.action(async () => {
-      const res = await this.client.setDone(r.id, done, version);
+      const res = await this.client.setDone(id, done, version);
       this.say(`${done ? 'Done' : 'Reopened'} [${shortId(res.reminder.id)}] ${res.reminder.text}`, 'green');
     });
   }

@@ -25,15 +25,15 @@ export type MokkanView = {
 /** The list shown: every open reminder, or the finished ones. */
 export type MokkanTab = 'stack' | 'done'
 
-/** The last result, drawn on the status line until 15 s pass or the next key; `id` counts the messages said. */
-export type MokkanMessage = { text: string; tone: 'ok' | 'error'; id: number } | null
+/** The last result, drawn on the status line until 15 s pass or the next key: green, yellow for a nudge, red for an error; `id` counts the messages said. */
+export type MokkanMessage = { text: string; tone: 'ok' | 'note' | 'error'; id: number } | null
 
 /** What the pane's field is for: a new todo or reminder, or a change to the pointed one. */
 export type MokkanMode =
   | { kind: 'normal' }
   | { kind: 'input'; purpose: 'push' | 'in' | 'edit' | 'time'; targetId?: string; value: string }
-  /** `target` names what the action takes: a reminder's text, or the account. */
-  | { kind: 'confirm'; action: 'pop' | 'dequeue' | 'logout'; target: string }
+  /** `target` names what the action takes: a reminder's text, or the account; `targetId` the reminder done and undone change. */
+  | { kind: 'confirm'; action: 'pop' | 'dequeue' | 'logout' | 'done' | 'undone'; target: string; targetId?: string }
   /**
    * Login or registration: the email, the emailed code (register only), then the password.
    * `masked` is the bullets drawn for the password; the text itself never enters state.
@@ -52,6 +52,8 @@ declare module 'claude-code' {
       busy: string | null
       /** True while a refresh is in flight. */
       syncing: boolean
+      /** True while the help view (`h`) replaces the list. */
+      help: boolean
     }
   }
 }

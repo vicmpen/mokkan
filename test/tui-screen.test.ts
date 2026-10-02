@@ -33,7 +33,7 @@ describe('render: dashboard', () => {
     for (const l of lines) expect(displayWidth(l)).toBeLessThanOrEqual(79); // the last column stays blank
     for (const l of raw) expect(l.endsWith('\x1b[0m')).toBe(true);
     expect(lines[0].startsWith(' mokkan · a@example.com · 480 credits · api.mokkan.dev')).toBe(true);
-    expect(lines[0].endsWith('synced 8s')).toBe(true);
+    expect(lines[0]).toMatch(/synced \d\d:\d\d$/);
     expect(displayWidth(lines[0])).toBe(79);
     expect(lines[1].trimEnd()).toBe(' Stack 3 │ Done');
     expect(lines[2]).toBe('─'.repeat(79));
@@ -42,22 +42,22 @@ describe('render: dashboard', () => {
     expect(lines[3].endsWith('overdue 20m')).toBe(true);
     expect(raw[3]).toMatch(/\x1b\[33;1m●/); // a due timed reminder: yellow
     expect(raw[3]).toMatch(/\x1b\[31;1moverdue 20m/); // red, and selected: bold, no background
-    expect(lines[4].trimEnd()).toBe('       reminder · pushed 3h ago'); // the selected row's detail, under its text
-    expect(raw[4]).toContain('\x1b[2mreminder · pushed 3h ago');
+    expect(lines[4].trimEnd()).toBe('       reminder · added 3h ago'); // the selected row's detail, under its text
+    expect(raw[4]).toContain('\x1b[2mreminder · added 3h ago');
     expect(lines[5].startsWith('  ○ 2: ask Maria about the release notes')).toBe(true);
     expect(lines[5].endsWith('40m ago')).toBe(true);
     expect(lines[6].trimEnd()).toBe('  □ 3: buy milk'); // a todo: no time column
     expect(lines.slice(7, 21).every((l) => l === '')).toBe(true);
     expect(lines[21].trimEnd()).toBe(' Pushed [f3a9c1d2] check the flaky login test');
-    expect(lines[22].trimEnd()).toBe(' p todo · i remind · e edit · t time · a done · k ack · s view');
-    expect(lines[23].trimEnd()).toBe(' x pop · d dequeue · K ack all · r refresh · b buy · q quit · ↑↓ 1-9 move');
+    expect(lines[22].trimEnd()).toBe(' t todo · r reminder · e edit · w when · d done · a ack · v view done · q quit');
+    expect(lines[23].trimEnd()).toBe(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move');
     expect(cursorPosition(dashboard(), SIZE)).toBeNull();
   });
 
   it('shows header states: syncing, offline with data age, credits, low and none, loading', () => {
     expect(strip(render(dashboard({ refreshing: true }), SIZE, NOW)[0]).endsWith('syncing…')).toBe(true);
     const offline = render(dashboard({ error: { kind: 'offline', message: 'x' }, fetchedAt: new Date(NOW.getTime() - 180_000) }), SIZE, NOW);
-    expect(strip(offline[0]).endsWith('offline · 3m old')).toBe(true);
+    expect(strip(offline[0])).toMatch(/offline · synced \d\d:\d\d$/);
     expect(offline[0]).toContain('\x1b[33moffline'); // yellow
     const low = render(dashboard({ credits: 7 }), SIZE, NOW)[0];
     expect(strip(low)).toContain(' · 7 credits · low · api.mokkan.dev');
@@ -76,7 +76,7 @@ describe('render: dashboard', () => {
     expect(header.startsWith(' mokkan · a@example.com')).toBe(true);
     expect(header).toContain('error: xxx');
     expect(header).toContain('…');
-    expect(header.endsWith('· 45s old')).toBe(true);
+    expect(header).toMatch(/· synced \d\d:\d\d$/);
     expect(displayWidth(header)).toBe(79);
   });
 
@@ -89,7 +89,7 @@ describe('render: dashboard', () => {
     const done = plain(render(dashboard({ tab: 'done', done: [gone] }), SIZE, NOW));
     expect(done[1].trimEnd()).toBe(' Stack 3 │ Done 1');
     expect(done[3].trimEnd()).toBe('▸ ✓ 1: gone');
-    expect(done[4].trimEnd()).toBe('       done 2h ago · pushed 1d ago');
+    expect(done[4].trimEnd()).toBe('       done 2h ago · added 1d ago');
   });
 
   it('tells todos from reminders by glyph and time column; only a due timed reminder is yellow', () => {
@@ -117,7 +117,7 @@ describe('render: dashboard', () => {
     expect(raw[7]).toContain('\x1b[31moverdue 3h');
     expect(raw[8]).toContain('\x1b[2m2d ago');
     expect(raw[9]).toContain('\x1b[2m·');
-    expect(lines[11].trimEnd()).toBe('       reminder · pushed 0s ago');
+    expect(lines[11].trimEnd()).toBe('       reminder · added 0s ago');
   });
 
   it('formats future times as in 40m, 17:00, Wed 17:00 and 12 Oct, in local time', () => {
@@ -128,17 +128,17 @@ describe('render: dashboard', () => {
     expect([lines[3], ...lines.slice(5, 8)].map((l) => l.split(/ {2,}/).pop())).toEqual(['in 40m', '17:00', 'Wed 17:00', '12 Oct']);
   });
 
-  it('shows the detail line for the selected row only: kind, pushed, seen, acked', () => {
+  it('shows the detail line for the selected row only: kind, added, shown, acked', () => {
     const t = reminder({ id: 't', text: 'renew the TLS cert', state: 'acknowledged', created_at: at(-3 * HOUR), delivered_at: at(-HOUR), acknowledged_at: at(-MIN) });
     const lines = plain(render(dashboard({ reminders: [r1, t], selected: 1 }), SIZE, NOW));
     expect(lines[3].startsWith('  ● 1: check')).toBe(true);
     expect(lines[4].trimEnd()).toBe('▸ □ 2: renew the TLS cert');
-    expect(lines[5].trimEnd()).toBe('       todo · pushed 3h ago · seen 1h ago · acked');
+    expect(lines[5].trimEnd()).toBe('       todo · added 3h ago · shown 1h ago · acked 1m ago');
     expect(lines[6]).toBe('');
   });
 
   it('shows empty views', () => {
-    expect(plain(render(dashboard({ reminders: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing on the stack. p adds a todo, i a reminder.');
+    expect(plain(render(dashboard({ reminders: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing on the stack. t adds a todo, r a reminder.');
     expect(plain(render(dashboard({ tab: 'done', done: [] }), SIZE, NOW))[3].trimEnd()).toBe(' Nothing finished yet.');
   });
 
@@ -155,7 +155,7 @@ describe('render: dashboard', () => {
     expect(lines[3].startsWith('  □ 10: item 10')).toBe(true);
     expect(lines[18].startsWith('  □ 25: item 25')).toBe(true);
     expect(lines[19].startsWith('▸ □ 26: item 26')).toBe(true); // selected 25, scroll 9: 17 rows and the detail line
-    expect(lines[20].trim()).toBe('todo · pushed 0s ago');
+    expect(lines[20].trim()).toBe('todo · added 0s ago');
     expect(lines[21]).not.toContain('item');
   });
 
@@ -196,7 +196,7 @@ describe('render: dashboard', () => {
     expect(cursorPosition(input, SIZE)).toEqual({ row: 23, column: 13 });
     const confirm = dashboard({ mode: { kind: 'confirm', action: 'pop', text: 'call the bank', version: 3 } });
     const c = plain(render(confirm, SIZE, NOW));
-    expect(c[22].trimEnd()).toBe(' pop "call the bank"?  y: yes  n: no');
+    expect(c[22].trimEnd()).toBe(' pop "call the bank"?  y: pop  n: keep');
     expect(c[23]).toBe('');
   });
 
@@ -204,11 +204,11 @@ describe('render: dashboard', () => {
     const long = dashboard({ mode: { kind: 'confirm', action: 'dequeue', text: `${'long '.repeat(30)}\x1b[2J`, version: 3 } });
     const raw = render(long, SIZE, NOW);
     const l = strip(raw[22]);
-    expect(l.startsWith(' dequeue "long long')).toBe(true);
-    expect(l.endsWith('…"?  y: yes  n: no')).toBe(true);
+    expect(l.startsWith(' pop "long long')).toBe(true); // dequeue is "pop oldest": the same question
+    expect(l.endsWith('…"?  y: pop  n: keep')).toBe(true);
     expect(displayWidth(l)).toBe(79);
     const narrow = strip(render(dashboard({ mode: { kind: 'confirm', action: 'pop', text: 'x'.repeat(50), version: 3 } }), { columns: 30, rows: 24 }, NOW)[22]);
-    expect(narrow).toBe(` pop "${'x'.repeat(5)}…"?  y: yes  n: no`); // 29 drawn columns
+    expect(narrow).toBe(` pop "${'x'.repeat(3)}…"?  y: pop  n: keep`); // 29 drawn columns
     expect(displayWidth(narrow)).toBe(29);
   });
 

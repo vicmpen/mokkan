@@ -42,19 +42,24 @@ Showing a reminder doesn't mean you saw it. mokkan keeps it lit until you acknow
 
 The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan-pane` opens it. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `/mokkan-pane close` closes it, `/mokkan-pane focus` gives it the keyboard; `Esc` hands the keyboard back and `ctrl+x tab` takes it again.
 
-It is laid out like `mokkan ui`: the header with your credits and sync state, `Stack │ Done` (switched with `s`), the list, the last result and the keys. One stack and a done view. The stack holds todos (`□`, no due time) and reminders (`◷` scheduled, `●` due, `○` shown, `·` acknowledged) in stack order. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets a line with its history (`todo · pushed 3h ago · seen 1h ago`). `1`–`9` or a click selects a row, marked with `▸` and bold (no highlight); selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to act` in place of the commands:
+It is laid out like `mokkan ui`: the header with your credits, `Stack │ Done`, the list, the last result, the keys, and the sync state on the bottom line. The pane draws its own rounded border, pale green while it has the keyboard and grey while it doesn't. One stack and a done view. The stack holds todos (`□`, no due time) and reminders (`◷` scheduled, `●` due, `○` shown, `·` acknowledged) in stack order. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets its history underneath (`todo · added 3h ago · shown 1h ago · acked 5m ago`). `↑` `↓` and `Tab` walk the pane's buttons, and the row they land on is selected, marked with `▸` and bold; a click or a row's number selects it directly. Rows past the ninth are typed as two digits within a second (`1` then `2` is row 12), and with ten or more rows `0` joins the keys for rows 10, 20 and so on. Selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to use keys` in place of the commands:
 
-| Key | Action |
-|---|---|
-| `p` / `i` | add a todo / schedule a reminder (`2h text`) |
-| `e` / `t` | edit the selected one's text / its due time (`2h`, or `clear`) |
-| `a` / `k` | mark it done (or reopen it in the done view) / acknowledge it |
-| `s` | switch between the stack and done |
-| `x` / `d` | pop the top / dequeue the bottom |
-| `o` / `r` / `c` | log out / refresh / close the pane |
-| `l` / `g` | log in / register, when logged out (the password is masked) |
+| Key | Label | Action |
+|---|---|---|
+| `t` | `todo` | add a todo: type what to remember (1 credit) |
+| `r` | `reminder` | schedule a reminder: `2h call the bank`, the first word is a duration (1 credit, +1 held for the email) |
+| `e` | `edit` | edit the selected one's text (every 3rd edit costs 1 credit) |
+| `w` | `when` | set its due time (`2h`), or `clear` it to make it a todo again |
+| `d` | `done` / `reopen` | mark it done; in the done view, reopen it |
+| `a` | `ack` | acknowledge it: you've seen it, so its email stops |
+| `p` / `o` | `pop top` / `pop oldest` | finish the top / the oldest one on the stack |
+| `v` | `view done` / `view stack` | switch between the stack and done |
+| `b` | `buy` | open Stripe Checkout in your browser to add credits (not on mobile) |
+| `s` / `l` / `q` | `sync` / `log out` / `close` | sync now / log out / close the pane |
+| `h` | `help` / `back` | show what mokkan is, the glyphs, ack vs done vs pop, and the costs in place of the list; `h` again goes back |
+| `l` / `r` | `log in` / `register` | when logged out (the password is masked) |
 
-Pop, dequeue and log out ask first and name what they act on: `pop "call the bank"?`. While a command runs, the header names it (`popping…`) and other keys wait. The line above the commands shows each result, with errors starting `error:`, and clears itself after 15 seconds. When the server can't be reached the pane keeps the last list and marks it `offline · 3m old`.
+Pop and log out ask first, naming what they act on and what each answer does: `pop "call the bank"?`, with `y: pop · n: keep` underneath. While a command runs, other keys wait. The line above the commands shows each result with the reminder it touched (`added · call mom`, `due in 2h · call the bank`), errors start with `error:` in red and wrap so the fix at their end (`Run: mokkan buy`) stays readable, and the line clears itself after 15 seconds. The header's balance turns yellow under 10 credits (`· 7 credits · low`) and red at 0; `b` opens Stripe Checkout to add more. When the server can't be reached the pane keeps the last list and marks it `offline · synced 12:04`, the time of the last good sync; online the bottom line reads `synced 12:04`, and while a command runs it names it (`popping…`).
 
 The mod runs the plugin's own copy of the CLI, refreshes every minute while it is open and after every action. Reminders with a due time that come due while the pane is open are announced with a toast. Mods are hooks and ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules` next to the shell hooks.
 
@@ -135,24 +140,24 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 
 ## Terminal UI
 
-`mokkan ui` opens a full-screen view of your stack in the terminal: one stack of every open reminder (scheduled ones included) and a done view, your credit balance, and key hints. Todos (pushed, no due time) show `□`; reminders with a due time show `◷` scheduled, `●` due (yellow), `○` shown, `·` acknowledged, with the time on the right (`in 40m`, `17:00`, `Wed 17:00`, `12 Oct`, `overdue 40m` in red, `40m ago`). The selected row has a detail line under it (`todo · pushed 3h ago · seen 1h ago`). It refreshes every 10 seconds and after every action.
+`mokkan ui` opens a full-screen view of your stack in the terminal: one stack of every open reminder (scheduled ones included) and a done view, your credit balance, and key hints. Todos (pushed, no due time) show `□`; reminders with a due time show `◷` scheduled, `●` due (yellow), `○` shown, `·` acknowledged, with the time on the right (`in 40m`, `17:00`, `Wed 17:00`, `12 Oct`, `overdue 40m` in red, `40m ago`). The selected row has a detail line under it (`todo · added 3h ago · shown 1h ago · acked 5m ago`). It refreshes every 10 seconds and after every action. The footer uses the pane's labels (`t todo · r reminder · … · p pop top · o pop oldest`).
 
 | Key | Action |
 |---|---|
 | `↑` `↓`, `Home`, `End`, `1`–`9` | move the selection (selecting never changes anything) |
-| `p` | push a todo: type the text, `Enter` sends it (1 credit) |
-| `i` | schedule a reminder: `2h call the bank`, the first word is a duration |
+| `t` | add a todo: type what to remember, `Enter` adds it (1 credit) |
+| `r` | schedule a reminder: `2h call the bank`, the first word is a duration |
 | `e` | edit the selected one's text (every 3rd edit costs 1 credit) |
-| `t` | change its due time: a duration, or `clear` (turns a todo into a reminder and back) |
-| `a` | mark the selected one done; in the done view, reopen it |
-| `k` / `K` | acknowledge the selected one / all |
-| `s`, `Tab` | switch between the stack and the done view |
-| `x` / `d` | pop the top / dequeue the bottom, after a confirmation that names the reminder |
-| `r` | refresh now |
+| `w` | set its due time: a duration (turns a todo into a reminder), or `clear` to make it a todo again |
+| `d` | mark the selected one done; in the done view, reopen it (the footer says `reopen` there) |
+| `a` / `A` | acknowledge the selected one / all |
+| `v`, `Tab` | switch between the stack and the done view (`view done` / `view stack`) |
+| `p` / `o` | pop top / pop oldest (`mokkan pop` / `mokkan dequeue`), after a confirmation that names the reminder: `y: pop  n: keep` |
+| `s` | sync now |
 | `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
 | `q`, `Ctrl-C` | quit |
 
-Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `k`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
+Reminders that are due while the view is open count as shown, exactly as when a Claude Code session shows them: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
 ## Credits and pricing
 

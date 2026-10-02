@@ -23,9 +23,9 @@ export interface InputMode {
 }
 /**
  * `text`: the reminder's text as the server sent it (the renderer cleans and shortens it). `version`: the list
- * version when the prompt opened, sent as expected_version.
+ * version when the prompt opened, sent as expected_version. `targetId`: for done and undone, the reminder they change.
  */
-export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue'; text: string; version: number | null }
+export interface ConfirmMode { kind: 'confirm'; action: 'pop' | 'dequeue' | 'done' | 'undone'; text: string; version: number | null; targetId?: string }
 export type Mode = { kind: 'normal' } | InputMode | ConfirmMode;
 
 export interface LoginState {

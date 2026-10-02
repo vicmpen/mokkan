@@ -116,7 +116,7 @@ describe('TuiApp core', () => {
     expect(app.state.selected).toBe(2);
   });
 
-  it('switches views with s and Tab, loads the done list, and keeps it fresh after', async () => {
+  it('switches views with v and Tab, loads the done list, and keeps it fresh after', async () => {
     const acct = seed(server);
     acct.reminders.set(IDNEW, rem(IDNEW, 'old', 0, { state: 'done', done_at: '2026-09-27T12:00:00.000Z' }));
     const app = makeApp(server, h);
@@ -125,13 +125,13 @@ describe('TuiApp core', () => {
     expect(app.state.tab).toBe('stack');
     expect(app.rows().map((r) => r.id)).toEqual([ID3, ID2, ID1]);
     expect(doneLists()).toBe(0);
-    await type(app, 's');
+    await type(app, 'v');
     expect(app.state.tab).toBe('done');
     expect(app.rows().map((r) => r.id)).toEqual([IDNEW]);
     expect(doneLists()).toBe(1);
     await type(app, '\t');
     expect(app.state.tab).toBe('stack');
-    await type(app, 's\t');
+    await type(app, 'v\t');
     expect(doneLists()).toBe(1);
     await app.refresh(); // once loaded, every refresh reloads it, so its count stays right
     expect(doneLists()).toBe(2);
@@ -180,7 +180,7 @@ describe('TuiApp core', () => {
   it('does not deliver while the done view is shown', async () => {
     seed(server);
     const app = makeApp(server, h);
-    await type(app, 's');
+    await type(app, 'v');
     expect(app.state.tab).toBe('done');
     await app.refresh();
     expect(server.count('POST', '/reminders/deliver')).toBe(0);
@@ -246,13 +246,13 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'p');
-    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', label: 'todo', buffer: '', cursor: 0 });
+    await type(app, 't');
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', label: 'new todo', buffer: '', cursor: 0 });
     expect(app.state.message).toBeNull();
     await type(app, 'call mom\r');
     expect(server.last('POST', '/reminders')?.body).toEqual({ text: 'call mom' });
     expect(app.state.mode).toEqual({ kind: 'normal' });
-    expect(app.state.message).toEqual({ text: 'Pushed [fake0001] call mom', tone: 'green' });
+    expect(app.state.message).toEqual({ text: 'Added [fake0001] call mom', tone: 'green' });
     expect(app.rows()[0].text).toBe('call mom');
     expect(app.state.credits).toBe(99);
   });
@@ -261,7 +261,7 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'pabc\x1b[D\x1b[DX');
+    await type(app, 'tabc\x1b[D\x1b[DX');
     expect(app.state.mode).toMatchObject({ buffer: 'aXbc', cursor: 2 });
     await type(app, '\x7f\x1b[3~');
     expect(app.state.mode).toMatchObject({ buffer: 'ac', cursor: 1 });
@@ -281,7 +281,7 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'pac\x1b[D');
+    await type(app, 'tac\x1b[D');
     await type(app, `${PASTE_START}x🚀\r\ny${PASTE_END}`);
     expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'push', buffer: 'ax🚀 yc', cursor: 5 });
     expect(server.count('POST', '/reminders')).toBe(0);
@@ -292,7 +292,7 @@ describe('TuiApp actions', () => {
     const app = makeApp(server, h);
     await app.refresh();
     expect(MAX_INPUT_CODE_POINTS).toBe(2000);
-    await type(app, 'pab\x1b[D');
+    await type(app, 'tab\x1b[D');
     await type(app, `${PASTE_START}${'x'.repeat(2500)}${PASTE_END}`);
     const capped = { buffer: `a${'x'.repeat(1998)}b`, cursor: 1999 };
     expect(app.state.mode).toMatchObject(capped);
@@ -315,7 +315,7 @@ describe('TuiApp actions', () => {
     const acct = seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'x');
+    await type(app, 'p');
     await type(app, `${PASTE_START}y${PASTE_END}`);
     expect(app.state.mode.kind).toBe('confirm');
     expect(server.count('POST', '/reminders/pop')).toBe(0);
@@ -326,10 +326,10 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'p   \r');
+    await type(app, 't   \r');
     expect(app.state.mode).toEqual({ kind: 'normal' });
     expect(server.count('POST', '/reminders')).toBe(0);
-    await type(app, 'pabc\x03');
+    await type(app, 'tabc\x03');
     expect(app.exitCode).toBe(0);
   });
 
@@ -337,7 +337,7 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'isoon call mom\r');
+    await type(app, 'rsoon call mom\r');
     expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'in', buffer: 'soon call mom' });
     expect(app.state.message).toEqual({ text: 'Invalid duration "soon" (examples: 30s, 10m, 2h, 1d, 1h30m)', tone: 'red' });
     await type(app, '\x152h\r');
@@ -366,40 +366,40 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, '2t2h\r'); // ID2 is delivered by now: the fake answers 409 not_editable
+    await type(app, '2w2h\r'); // ID2 is delivered by now: the fake answers 409 not_editable
     expect(server.last('PATCH', `/reminders/${ID2}`)?.body).toEqual({ due_at: '2026-09-28T14:00:00.000Z', expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'This reminder was already shown or emailed, so its time can no longer be changed.', tone: 'red' });
-    await type(app, '1t'); // row 1 is the scheduled ID3
-    expect(app.state.mode).toMatchObject({ purpose: 'time', label: 'time [3000cccc]', targetId: ID3, buffer: '' });
+    await type(app, '1w'); // row 1 is the scheduled ID3
+    expect(app.state.mode).toMatchObject({ purpose: 'time', label: 'due in [3000cccc]', targetId: ID3, buffer: '' });
     await type(app, '2h\r');
     expect(server.last('PATCH', `/reminders/${ID3}`)?.body).toEqual({ due_at: '2026-09-28T14:00:00.000Z', expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'Edited [3000cccc] later (due 2026-09-28T14:00:00.000Z, in 2h)', tone: 'green' });
-    await type(app, 'tclear\r');
+    await type(app, 'wclear\r');
     expect(server.last('PATCH', `/reminders/${ID3}`)?.body).toEqual({ due_at: null, expected_version: 9 });
     expect(app.state.message).toEqual({ text: 'Edited [3000cccc] later (time cleared)', tone: 'green' });
-    await type(app, 'tnever\r');
+    await type(app, 'wnever\r');
     expect(app.state.mode).toMatchObject({ purpose: 'time', buffer: 'never' });
     expect(app.state.message?.tone).toBe('red');
   });
 
-  it('refuses e, t, k and a without a usable selection', async () => {
+  it('refuses e, w, a and d without a usable selection', async () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 's'); // done view
-    for (const key of ['e', 't', 'k']) {
+    await type(app, 'v'); // done view
+    for (const key of ['e', 'w', 'a']) {
       await type(app, key);
       expect(app.state.mode).toEqual({ kind: 'normal' });
-      expect(app.state.message).toEqual({ text: 'Press s for the stack to change reminders.', tone: 'yellow' });
+      expect(app.state.message).toEqual({ text: 'Press v for the stack to change reminders.', tone: 'yellow' });
     }
-    await type(app, 'a'); // nothing finished yet
+    await type(app, 'd'); // nothing finished yet
     expect(app.state.message).toEqual({ text: 'Nothing selected.', tone: 'yellow' });
     const empty = makeApp(server, h);
     server.withAccount();
     await empty.refresh();
-    await type(empty, 'a');
+    await type(empty, 'd');
     expect(empty.state.message).toEqual({ text: 'Nothing selected.', tone: 'yellow' });
-    for (const key of ['x', 'd']) {
+    for (const key of ['p', 'o']) {
       await type(empty, key);
       expect(empty.state.mode).toEqual({ kind: 'normal' });
       expect(empty.state.message).toEqual({ text: 'The stack is empty.', tone: 'plain' });
@@ -420,34 +420,56 @@ describe('TuiApp actions', () => {
     return { status: 200, body: { version: acct.version, reminder: structuredClone(r) } };
   });
 
-  it('marks the selected reminder done with a, and reopens it from the done view', async () => {
+  it('marks the selected reminder done with d, and reopens it from the done view', async () => {
     const acct = seed(server);
     withDone(acct);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, '2a');
+    await type(app, '2d');
     expect(server.last('POST', `/reminders/${ID2}/done`)?.body).toEqual({ done: true, expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'Done [bbbb2222] second', tone: 'green' });
     expect(app.rows().map((r) => r.id)).toEqual([ID3, ID1]);
-    await type(app, 's');
+    await type(app, 'v');
     expect(app.rows().map((r) => r.id)).toEqual([ID2]);
-    await type(app, 'a');
+    await type(app, 'd');
     expect(server.last('POST', `/reminders/${ID2}/done`)?.body).toEqual({ done: false, expected_version: 9 });
     expect(app.state.message).toEqual({ text: 'Reopened [bbbb2222] second', tone: 'green' });
     expect(app.rows()).toEqual([]);
     expect(app.state.reminders.map((r) => r.id)).toEqual([ID3, ID2, ID1]);
   });
 
+  it('asks with Enter before marking the selected reminder done, and before reopening it from the done view', async () => {
+    const acct = seed(server);
+    withDone(acct);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, '2\rn');
+    expect(app.state.mode).toEqual({ kind: 'normal' });
+    expect(server.count('POST', `/reminders/${ID2}/done`)).toBe(0);
+    await type(app, '\r');
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'done', text: 'second', version: 8, targetId: ID2 });
+    expect(app.render({ columns: 80, rows: 24 }, NOW)[22]).toContain(' mark "second" done?  y: done  n: keep');
+    await type(app, 'y');
+    expect(server.last('POST', `/reminders/${ID2}/done`)?.body).toEqual({ done: true, expected_version: 8 });
+    expect(app.state.message).toEqual({ text: 'Done [bbbb2222] second', tone: 'green' });
+    await type(app, 'v\r');
+    expect(app.state.mode).toEqual({ kind: 'confirm', action: 'undone', text: 'second', version: 9, targetId: ID2 });
+    expect(app.render({ columns: 80, rows: 24 }, NOW)[22]).toContain(' reopen "second"?  y: reopen  n: keep');
+    await type(app, 'y');
+    expect(server.last('POST', `/reminders/${ID2}/done`)?.body).toEqual({ done: false, expected_version: 9 });
+    expect(app.state.message).toEqual({ text: 'Reopened [bbbb2222] second', tone: 'green' });
+  });
+
   it('pops the top after confirmation with the version adopted from delivery, and cancels on any other key', async () => {
     const acct = seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'xn');
+    await type(app, 'pn');
     expect(app.state.mode).toEqual({ kind: 'normal' });
     expect(server.count('POST', '/reminders/pop')).toBe(0);
-    await type(app, 'x');
+    await type(app, 'p');
     expect(app.state.mode).toEqual({ kind: 'confirm', action: 'pop', text: 'second', version: 8 });
-    expect(app.render({ columns: 80, rows: 24 }, NOW)[22]).toContain(' pop "second"?  y: yes  n: no'); // names its target
+    expect(app.render({ columns: 80, rows: 24 }, NOW)[22]).toContain(' pop "second"?  y: pop  n: keep'); // names its target
     await type(app, 'y');
     expect(server.last('POST', '/reminders/pop')?.body).toEqual({ expected_version: 8 });
     expect(acct.reminders.get(ID2)?.state).toBe('done');
@@ -459,11 +481,11 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'd');
+    await type(app, 'o');
     expect(app.state.mode).toEqual({ kind: 'confirm', action: 'dequeue', text: 'first', version: 8 });
     await type(app, 'y');
     expect(server.last('POST', '/reminders/dequeue')?.body).toEqual({ expected_version: 8 });
-    expect(app.state.message).toEqual({ text: 'Dequeued [aaaa1111] first', tone: 'green' });
+    expect(app.state.message).toEqual({ text: 'Popped [aaaa1111] first', tone: 'green' });
   });
 
   it('refreshes and asks to retry when the list changed under a pop', async () => {
@@ -471,7 +493,7 @@ describe('TuiApp actions', () => {
     const app = makeApp(server, h);
     await app.refresh();
     acct.version += 1;
-    await type(app, 'xy');
+    await type(app, 'py');
     expect(acct.reminders.get(ID2)?.state).toBe('delivered');
     expect(app.state.message).toEqual({ text: 'The list changed, try again.', tone: 'yellow' });
     expect(app.state.version).toBe(9);
@@ -481,7 +503,7 @@ describe('TuiApp actions', () => {
     const acct = seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'x');
+    await type(app, 'p');
     expect(app.state.mode).toMatchObject({ kind: 'confirm', text: 'second' });
     acct.reminders.set(IDNEW, rem(IDNEW, 'from another session', 4)); // another session pushes onto the top
     acct.version += 1;
@@ -512,15 +534,15 @@ describe('TuiApp actions', () => {
     expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'edit', buffer: 'second draft', cursor: 12, targetId: ID2, version: 9 });
   });
 
-  it('acknowledges the selected reminder with k and all of them with K', async () => {
+  it('acknowledges the selected reminder with a and all of them with A', async () => {
     seed(server);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, '3k');
+    await type(app, '3a');
     expect(server.last('POST', '/reminders/ack')?.body).toEqual({ ids: [ID1], expected_version: 8 });
     expect(app.state.message).toEqual({ text: 'Acknowledged 1 reminder(s).', tone: 'green' });
     expect(app.state.selected).toBe(2); // k is ack now, not a move
-    await type(app, 'K');
+    await type(app, 'A');
     expect(server.last('POST', '/reminders/ack')?.body).toEqual({ all: true });
     expect(app.state.message).toEqual({ text: 'Acknowledged 1 reminder(s).', tone: 'green' });
     expect(app.rows().map((r) => r.state)).toEqual(['scheduled', 'acknowledged', 'acknowledged']);
@@ -530,7 +552,7 @@ describe('TuiApp actions', () => {
     seed(server, 0);
     const app = makeApp(server, h);
     await app.refresh();
-    await type(app, 'pcall mom\r');
+    await type(app, 'tcall mom\r');
     expect(app.state.message?.tone).toBe('red');
     expect(app.state.message?.text).toContain('Not enough credits');
     expect(app.state.message?.text).toContain('mokkan buy');
@@ -540,7 +562,7 @@ describe('TuiApp actions', () => {
     seed(server);
     const app = makeApp(server, h);
     const first = app.refresh();
-    await type(app, 'p');
+    await type(app, 't');
     const typed = type(app, 'hello\r');
     await first;
     await typed;

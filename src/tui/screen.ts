@@ -131,8 +131,8 @@ function dashboardLines(state: TuiState, size: Size, now: Date): string[] {
   const items = rowsOf(state);
   const list: string[] = [];
   if (items.length === 0) {
-    const empty = state.tab === 'done' ? 'Nothing finished yet.' : 'Nothing on the stack. p adds a todo, i a reminder.';
-    list.push(line([part(` ${empty}`, 'dim')], [], columns));
+    const empty = state.tab === 'done' ? ['Nothing finished yet.', 'd marks a stack row done.'] : ['Nothing on the stack. t adds a todo, r a reminder.'];
+    for (const text of empty) list.push(line([part(` ${text}`, 'dim')], [], columns));
   } else {
     const numberWidth = String(items.length).length;
     for (let idx = state.scroll; idx < Math.min(items.length, state.scroll + listRows); idx++) {
@@ -154,7 +154,8 @@ function header(state: TuiState, columns: number, now: Date): string {
   const left: Part[] = [part(' mokkan', 'bold'), part(` · ${clean(state.email)}`)];
   const c = state.credits;
   if (typeof c === 'number' && Number.isFinite(c)) {
-    left.push(c <= 0 ? part(` · ${c} credits · buy`, 'red') : c < LOW_CREDITS ? part(` · ${c} credits · low`, 'yellow') : part(` · ${c} credits`, 'dim'));
+    const credits = ` · ${c} ${Math.abs(c) === 1 ? 'credit' : 'credits'}`;
+    left.push(c <= 0 ? part(`${credits} · buy`, 'red') : c < LOW_CREDITS ? part(`${credits} · low`, 'yellow') : part(credits, 'dim'));
   }
   left.push(part(` · ${state.host}`));
   return line(left, [status(state, now, Math.max(8, columns - 2 - HEADER_LEFT_MIN))], columns);
@@ -162,15 +163,16 @@ function header(state: TuiState, columns: number, now: Date): string {
 
 /** The header's right side. A long error message is shortened so the whole part fits `maxWidth`. */
 function status(state: TuiState, now: Date, maxWidth: number): Part {
-  const age = state.fetchedAt ? formatAge(now.getTime() - state.fetchedAt.getTime()) : null;
+  // The clock time of the last good fetch, as the pane shows it.
+  const age = state.fetchedAt ? `synced ${state.fetchedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}` : null;
   if (state.refreshing) return part('syncing…', 'dim');
   if (state.error) {
-    const suffix = age ? ` · ${age} old` : '';
+    const suffix = age ? ` · ${age}` : '';
     if (state.error.kind === 'offline') return part(`offline${suffix}`, 'yellow');
     const msg = fit(clean(state.error.message), Math.max(1, maxWidth - displayWidth('error: ') - displayWidth(suffix)));
     return part(`error: ${msg}${suffix}`, 'red');
   }
-  return part(age ? `synced ${age}` : 'loading…', 'dim');
+  return part(age ?? 'loading…', 'dim');
 }
 
 function tabs(state: TuiState, columns: number): string {
@@ -226,14 +228,14 @@ function row(r: Reminder, index: number, numberWidth: number, selected: boolean,
   });
 }
 
-/** The line under the selected row: `todo · pushed 3h ago · seen 1h ago · acked`, or `done 2h ago · pushed 1d ago`. */
+/** The line under the selected row: `todo · added 3h ago · shown 1h ago · acked 5m ago`, or `done 2h ago · added 1d ago`. */
 function detail(r: Reminder, now: Date): string {
   const ago = (at: string): string => `${formatAge(now.getTime() - Date.parse(at))} ago`;
-  const pushed = `pushed ${ago(r.created_at)}`;
-  if (r.state === 'done') return r.done_at ? `done ${ago(r.done_at)} · ${pushed}` : `done · ${pushed}`;
-  const parts = [isTodo(r) ? 'todo' : 'reminder', pushed];
-  if (r.delivered_at) parts.push(`seen ${ago(r.delivered_at)}`);
-  if (r.acknowledged_at) parts.push('acked');
+  const added = `added ${ago(r.created_at)}`;
+  if (r.state === 'done') return r.done_at ? `done ${ago(r.done_at)} · ${added}` : `done · ${added}`;
+  const parts = [isTodo(r) ? 'todo' : 'reminder', added];
+  if (r.delivered_at) parts.push(`shown ${ago(r.delivered_at)}`);
+  if (r.acknowledged_at) parts.push(`acked ${ago(r.acknowledged_at)}`);
   return parts.join(' · ');
 }
 
@@ -245,13 +247,15 @@ function footer(state: TuiState, columns: number): string[] {
     return [line([part(label, 'bold'), part(text)], [], columns), line([part(` ${m.hint}`, 'dim')], [], columns)];
   }
   if (m.kind === 'confirm') {
-    // The reminder is shortened, never the answers.
-    const room = columns - displayWidth(` ${m.action} ""?  y: yes  n: no`);
-    return [line([part(` ${m.action} "${fit(clean(m.text), room)}"?  y: yes  n: no`, 'yellow')], [], columns), ''];
+    // The reminder is shortened, never the answers; the answers name their outcome.
+    const [before, after, yes] = m.action === 'done' ? ['mark ', ' done', 'done'] : m.action === 'undone' ? ['reopen ', '', 'reopen'] : ['pop ', '', 'pop'];
+    const room = columns - displayWidth(` ${before}""${after}?  y: ${yes}  n: keep`);
+    return [line([part(` ${before}"${fit(clean(m.text), room)}"${after}?  y: ${yes}  n: keep`, 'yellow')], [], columns), ''];
   }
+  const inDone = state.tab === 'done';
   return [
-    line([part(' p todo · i remind · e edit · t time · a done · k ack · s view', 'dim')], [], columns),
-    line([part(' x pop · d dequeue · K ack all · r refresh · b buy · q quit · ↑↓ 1-9 move', 'dim')], [], columns),
+    line([part(` t todo · r reminder · e edit · w when · d ${inDone ? 'reopen' : 'done'} · a ack · v ${inDone ? 'view stack' : 'view done'} · q quit`, 'dim')], [], columns),
+    line([part(' p pop top · o pop oldest · A ack all · s sync · b buy · ↑↓ 1-9 move', 'dim')], [], columns),
   ];
 }
 

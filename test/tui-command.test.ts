@@ -39,7 +39,7 @@ describe('mokkan ui', () => {
     expect(res.stdout.startsWith(ENTER_SCREEN)).toBe(true);
     expect(res.stdout.endsWith(LEAVE_SCREEN)).toBe(true);
     expect(strip(res.stdout)).toContain(' mokkan · a@example.com');
-    expect(strip(res.stdout)).toContain('x pop · d dequeue · K ack all');
+    expect(strip(res.stdout)).toContain('p pop top · o pop oldest · A ack all');
     expect(tty.rawModes).toEqual([true, false]);
     // Each line is erased before it is drawn, never after (xterm would erase a character in the last column).
     expect(res.stdout).toContain('\x1b[H\x1b[2K\x1b[1m mokkan');
