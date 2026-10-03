@@ -968,6 +968,29 @@ async function feedbackCommand(ctx, args) {
   return 0;
 }
 
+// src/commands/sync.ts
+async function syncCommand(ctx) {
+  const source = typeof ctx.flags.source === "string" && ctx.flags.source !== "" ? ctx.flags.source : "cli";
+  const optional = (p) => p.catch(() => null);
+  const [list, done, balance] = await Promise.all([
+    ctx.client.list("all"),
+    optional(ctx.client.list("done")),
+    optional(ctx.client.balance()),
+    optional(ctx.client.heartbeat(source))
+  ]);
+  const due = list.reminders.filter((r) => r.due_at !== null && r.state === "due").map((r) => r.id);
+  const delivered = ctx.flags.deliver !== true ? [] : due.length === 0 ? [] : (await optional(ctx.client.deliver(due)))?.delivered ?? null;
+  if (ctx.json) {
+    ctx.io.stdout(`${JSON.stringify({ ...list, done: done?.reminders ?? null, balance: balance?.balance ?? null, delivered })}
+`);
+    return 0;
+  }
+  ctx.io.stdout(formatList(list.reminders, ctx.now()));
+  if (delivered !== null && delivered.length > 0) ctx.io.stdout(`Delivered ${delivered.length} reminder(s).
+`);
+  return 0;
+}
+
 // src/text.ts
 var MAX_TEXT2 = 40;
 function cleanText(text, max = MAX_TEXT2) {
@@ -1648,6 +1671,10 @@ var TuiApp = class {
   submitInput(mode) {
     const s = this.state;
     const text = mode.buffer.trim();
+    if (text === "" && mode.purpose === "edit") {
+      this.say("The text can\u2019t be empty.", "red");
+      return Promise.resolve();
+    }
     if (text === "") {
       s.mode = { kind: "normal" };
       this.changed();
@@ -2483,7 +2510,8 @@ var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "all", "once", "start", "co
 var VALUE_FLAGS = /* @__PURE__ */ new Set(["otp", "source", "interval"]);
 var COMMAND_FLAGS = /* @__PURE__ */ new Map([
   ["edit", { boolean: ["clear-due"], value: ["text", "in", "at"] }],
-  ["buy", { boolean: ["no-open"], value: ["pack"] }]
+  ["buy", { boolean: ["no-open"], value: ["pack"] }],
+  ["sync", { boolean: ["deliver"], value: [] }]
 ]);
 function parseArgs(argv) {
   if (argv[0] !== "--argline") return parseWords(argv);
@@ -2552,6 +2580,9 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan logout
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
+  mokkan sync [--source X] [--deliver]
+                                  list --all, done, balance and heartbeat in one call (the pane's refresh);
+                                  --deliver marks the due timed reminders delivered
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
   mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
@@ -2744,6 +2775,8 @@ Logged out.
         return await balanceCommand(ctx);
       case "heartbeat":
         return await heartbeatCommand(ctx);
+      case "sync":
+        return await syncCommand(ctx);
       case "feedback":
         return await feedbackCommand(ctx, args);
       case "watch":

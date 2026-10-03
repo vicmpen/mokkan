@@ -291,6 +291,7 @@ export class TuiApp {
   private submitInput(mode: InputMode): Promise<void> {
     const s = this.state;
     const text = mode.buffer.trim();
+    if (text === '' && mode.purpose === 'edit') { this.say('The text can’t be empty.', 'red'); return Promise.resolve(); }
     if (text === '') { s.mode = { kind: 'normal' }; this.changed(); return Promise.resolve(); }
     switch (mode.purpose) {
       case 'push':

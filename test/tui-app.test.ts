@@ -381,6 +381,16 @@ describe('TuiApp actions', () => {
     expect(app.state.message).toEqual({ text: 'Edited [bbbb2222] second draft', tone: 'green' });
   });
 
+  it('keeps the edit open on an emptied text instead of closing it', async () => {
+    seed(server);
+    const app = makeApp(server, h);
+    await app.refresh();
+    await type(app, '1e\x15   \r');
+    expect(app.state.mode).toMatchObject({ kind: 'input', purpose: 'edit', buffer: '   ' });
+    expect(app.state.message).toEqual({ text: 'The text can’t be empty.', tone: 'red' });
+    expect(server.requests.filter((r) => r.method === 'PATCH')).toHaveLength(0);
+  });
+
   it('changes and clears the time of a scheduled reminder, and explains a not-editable one', async () => {
     seed(server);
     const app = makeApp(server, h);

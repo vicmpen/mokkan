@@ -445,6 +445,42 @@ describe('mokkan CLI', () => {
     expect(res.stdout).toBe('Delivered 1 reminder(s).\n');
   });
 
+  it('sync fetches the list, history and balance, sends a heartbeat, and with --deliver delivers the due timed ones', async () => {
+    const timed = reminder({ id: 'aaaa3333-0000-0000-0000-000000000003', text: 'timed', due_at: '2026-09-28T11:00:00.000Z' });
+    const done = reminder({ id: 'aaaa4444-0000-0000-0000-000000000004', text: 'old', state: 'done' });
+    server.on('GET', '/reminders', (req) => ({ status: 200, body: { version: 1, reminders: req.query.get('scope') === 'done' ? [done] : [r1, r2, timed] } }));
+    server.on('GET', '/billing/balance', () => ({ status: 200, body: { balance: 42, ledger: [] } }));
+    server.on('POST', '/heartbeat', () => ({ status: 200, body: { active_until: '2026-09-28T12:05:00.000Z' } }));
+    server.on('POST', '/reminders/deliver', (req) => ({ status: 200, body: { version: 2, delivered: (req.body as { ids: string[] }).ids } }));
+
+    const res = await h.run(['sync', '--source', 'claude-code-pane', '--deliver', '--json'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(0);
+    // The untimed due one (r1) is a todo: never delivered.
+    expect(JSON.parse(res.stdout)).toEqual({ version: 1, reminders: [r1, r2, timed], done: [done], balance: 42, delivered: [timed.id] });
+    expect(server.last('POST', '/heartbeat')?.body).toEqual({ source: 'claude-code-pane' });
+    expect(server.last('POST', '/reminders/deliver')?.body).toEqual({ ids: [timed.id] });
+
+    await h.run(['sync', '--json'], { serverUrl: server.url, loggedIn: true });
+    expect(server.count('POST', '/reminders/deliver')).toBe(1); // without --deliver, never
+  });
+
+  it('sync fails only on the list: a failed history, balance or deliver is null', async () => {
+    const timed = reminder({ id: 'aaaa3333-0000-0000-0000-000000000003', text: 'timed', due_at: '2026-09-28T11:00:00.000Z' });
+    server.on('GET', '/reminders', (req) => (req.query.get('scope') === 'done'
+      ? { status: 500, body: { error: 'internal', message: 'boom' } }
+      : { status: 200, body: { version: 1, reminders: [timed] } }));
+    const res = await h.run(['sync', '--deliver', '--json'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(0);
+    expect(JSON.parse(res.stdout)).toEqual({ version: 1, reminders: [timed], done: null, balance: null, delivered: null });
+
+    const fresh = new CliHarness();
+    try {
+      expect((await fresh.run(['sync', '--json'], { serverUrl: server.url })).code).toBe(1); // logged out: the pane reads 1 as that
+    } finally {
+      fresh.dispose();
+    }
+  });
+
   it('deliver without ids is a usage error', async () => {
     const res = await h.run(['deliver'], { serverUrl: server.url, loggedIn: true });
     expect(res.code).toBe(1);

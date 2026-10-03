@@ -19,7 +19,6 @@ const STACK = () => [
   row(D, 'water the plants', 'delivered', -120, { delivered_at: at(-110) }),
 ]
 const DONE = () => [row(E, 'renew the domain', 'done', null, { created_at: at(-1440), done_at: at(-120) })]
-const BALANCE = JSON.stringify({ balance: 42, ledger: [] })
 const result = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 const OK = (stdout: string) => result(0, stdout)
 
@@ -30,8 +29,12 @@ const PANE = {
 } as const
 const RUN = { origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 160 } } as const
 
-function fakeCli(on: On) {
+function fakeCli(on: On, store: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: NOW })
+  // $.store, kept here so a test can look at it.
+  on('store.get', (_, e) => ({ value: store[e.key] }))
+  on('store.set', (_, e) => { store[e.key] = JSON.parse(JSON.stringify(e.value)); return { value: undefined } })
+  on('store.delete', (_, e) => { delete store[e.key]; return { value: undefined } })
   const panes: { id: string }[] = []
   const opens: Record<string, unknown>[] = []
   const toasts: string[] = []
@@ -39,7 +42,8 @@ function fakeCli(on: On) {
   const commands: Record<string, unknown>[] = []
   let stats = 0
   on('ui.open', (_, e) => { opens.push({ ...e }); if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
-  on('ui.panes', () => ({ value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
+  let listed = 0
+  on('ui.panes', () => (listed++, { value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); toastMs.push((e as { timeoutMs?: number }).timeoutMs); return { value: undefined } })
   on('ui.focus', () => ({}))
   on('command.register', (_, e) => { commands.push({ ...e }); return { value: { command: e.name } } })
@@ -63,23 +67,22 @@ function fakeCli(on: On) {
     if (cmd === 'logout') { session.loggedIn = false; return OK('{}') }
     if (!session.loggedIn) return result(1, '', 'Not logged in. Run: mokkan login\n')
     if (cmd === 'status') return OK(JSON.stringify({ me: { email: 'vic@example.com' } }))
-    if (cmd === 'list') return OK(JSON.stringify({ version: 1, reminders: stack }))
-    if (cmd === 'done' && e.argv.length === 4) return OK(JSON.stringify({ version: 1, reminders: session.done })) // bare `done --json`: the history
-    if (cmd === 'balance') return OK(BALANCE)
+    if (cmd === 'sync') {
+      // The list as fetched; with --deliver, the timed ones it shows as due are delivered on the server.
+      const due = e.argv.includes('--deliver') ? stack.filter(r => r.due_at !== null && r.state === 'due').map(r => r.id) : []
+      const delivered = session.fail.deliver ? null : due
+      if (delivered) session.stack = stack.map(r => (delivered.includes(r.id) ? { ...r, state: 'delivered', delivered_at: new Date(NOW).toISOString() } : r))
+      return OK(JSON.stringify({ version: 1, reminders: stack, done: session.done, balance: 42, delivered }))
+    }
     if (cmd === 'buy') return OK(JSON.stringify({ url: 'https://checkout.stripe.com/c/pay/cs_x', session_id: 'cs_x', opened: session.opens }))
     if (cmd === 'done') return OK(JSON.stringify({ done: [e.argv[3]] }))
     if (cmd === 'undone') return OK(JSON.stringify({ reopened: [e.argv[3]] }))
-    if (cmd === 'deliver') {
-      const ids = e.argv.slice(3, -1)
-      session.stack = stack.map(r => (ids.includes(r.id) ? { ...r, state: 'delivered', delivered_at: new Date(NOW).toISOString() } : r))
-      return OK(JSON.stringify({ delivered: ids }))
-    }
     if (cmd === 'edit' && e.argv.includes('--clear-due')) session.stack = stack.map(r => (r.id === e.argv[3] ? { ...r, due_at: null } : r))
     if (cmd === 'edit' && e.argv.includes('--in')) session.stack = stack.map(r => (r.id === e.argv[3] ? { ...r, due_at: at(120), state: 'scheduled' } : r))
     if (cmd === 'push') stack.unshift(row(`f6f6f6f6-0000-4000-8000-${String(stack.length).padStart(12, '0')}`, e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, envs, clock, toasts, toastMs, commands, panes, opens, stats: () => stats }
+  return { ran, session, store, listed: () => listed, envs, clock, toasts, toastMs, commands, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -224,6 +227,21 @@ test('push and edit run the CLI; the field label is not its submit label', async
   expect((await ui.find({ key: 'field' }))?.props.value).toBe('renew the TLS cert')
   await ui.input({ key: 'field', text: 'renew the TLS cert today' })
   expect(ran.some(a => a[2] === 'edit' && a[3] === A && a[4] === 'renew the TLS cert today')).toBe(true)
+  await ui.unmount()
+})
+
+test('an emptied edit stays open with an error and runs nothing', async ($, on) => {
+  const { ran, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  await ui.press({ key: 'tab-todos' })
+  await ui.press({ key: `row-${A}` })
+  await ui.press({ key: 'edit' })
+  await ui.input({ key: 'field', text: '   ' })
+  expect(ran.some(a => a[2] === 'edit')).toBe(false)
+  expect(await status(ui)).toBe('error: the text can’t be empty')
+  expect((await ui.find({ key: 'field' }))?.props.value).toBe('   ')
   await ui.unmount()
 })
 
@@ -580,11 +598,11 @@ test('offline keeps the last list, marked stale; overlapping refreshes keep the 
   expect(await shows(ui, '· 42 credits')).toBe(true)
 
   session.offline = false
-  session.slow.list = 2000
+  session.slow.sync = 2000
   const older = ui.press({ key: 'refresh' }) // slow, and older
   await clock.settle()
   expect(await shows(ui, 'syncing…')).toBe(true)
-  session.slow.list = 0
+  session.slow.sync = 0
   session.stack = [row(B, 'call the bank', 'due', -40)]
   await ui.press({ key: 'refresh' })
   expect(await ui.find({ key: `row-${D}` })).toBeUndefined()
@@ -604,14 +622,15 @@ test('toasts: a timed reminder that is due, once, and it is marked delivered; ne
   expect(toasts).toHaveLength(1)
   expect(toasts[0]).toContain('call the bank')
   expect(toastMs[0]).toBe(15_000)
-  expect(ran.filter(a => a[2] === 'deliver')).toEqual([[...ran[0]!.slice(0, 2), 'deliver', B, '--json']])
+  const state = (id: string) => session.stack.find(r => r.id === id)?.state
+  expect(state(B)).toBe('delivered')
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
 
   await ui.press({ key: 'push' })
   await ui.input({ key: 'field', text: 'milk' })
   await clock.settle()
   expect(toasts).toHaveLength(1) // a todo is due the moment it is pushed: never toasted or delivered
-  expect(ran.filter(a => a[2] === 'deliver')).toHaveLength(1)
+  expect(session.stack.filter(r => r.state === 'delivered').map(r => r.id)).toEqual([A, B, D]) // A and D were already
 
   session.stack = session.stack.map(r => (r.id === C ? { ...r, state: 'due' } : r))
   await ui.press({ key: 'refresh' })
@@ -622,23 +641,21 @@ test('toasts: a timed reminder that is due, once, and it is marked delivered; ne
   await ui.unmount()
 })
 
-test('every refresh sends a heartbeat: an open pane is an active session', async ($, on) => {
+test('every refresh is one CLI process, its heartbeat naming the pane: an open pane is an active session', async ($, on) => {
   const { ran, clock } = fakeCli(on)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await opened($, clock)
-  const beats = () => ran.filter(a => a[2] === 'heartbeat')
-  expect(beats()).toHaveLength(1)
-  expect(beats()[0]!.slice(3)).toEqual(['--source', 'claude-code-pane', '--json'])
+  expect(ran.map(a => a.slice(2))).toEqual([['sync', '--source', 'claude-code-pane', '--deliver', '--json']])
   await clock.advance(15_000)
-  expect(beats()).toHaveLength(2)
+  expect(ran).toHaveLength(2)
 })
 
 test('the 15-second timer refreshes only while the pane is open', async ($, on) => {
   const { ran, clock } = fakeCli(on)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const lists = () => ran.filter(a => a[2] === 'list').length
+  const lists = () => ran.filter(a => a[2] === 'sync').length
   await clock.advance(60_000)
   expect(lists()).toBe(0)
   await opened($, clock)
@@ -647,6 +664,38 @@ test('the 15-second timer refreshes only while the pane is open', async ($, on) 
   expect(lists()).toBe(1)
   await clock.advance(1)
   expect(lists()).toBe(2)
+  // Closed, it stops; opened again, it starts over.
+  await $.command.run({ command: 'mokkan:mokkan', args: '', ...RUN })
+  await clock.advance(60_000)
+  expect(lists()).toBe(2)
+  await opened($, clock)
+  expect(lists()).toBe(3)
+  await clock.advance(15_000)
+  expect(lists()).toBe(4)
+})
+
+test('the pane paints the last good list from the store at once, and stores each good one; logged out clears it', async ($, on) => {
+  const cached = { reminders: [row(C, 'cached one', 'due', -5)], done: [], balance: 70, failure: null, fetchedAt: NOW - 3_600_000 }
+  const { session, store, clock } = fakeCli(on, { view: cached })
+  session.offline = true
+  await $.command.run({ command: 'mokkan:mokkan', args: '', ...RUN })
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  // Before any sync lands: the cached list, on the tab it picks (a reminder is due).
+  expect((await ui.find({ key: `row-${C}` }))?.text).toBe('cached one')
+  expect(await shows(ui, '· 70 credits')).toBe(true)
+  await clock.settle()
+  // Offline: still the cached list, with the time it was synced.
+  expect(await ui.find({ key: `row-${C}` })).toBeDefined()
+  expect(await shows(ui, /^ offline · synced \d\d:\d\d$/)).toBe(true)
+
+  session.offline = false
+  await ui.press({ key: 'refresh' })
+  expect((store.view as { reminders: { id: string }[] }).reminders.map(r => r.id)).toEqual([A, B, C, D])
+
+  session.loggedIn = false
+  await ui.press({ key: 'refresh' })
+  expect(store.view).toBeUndefined()
+  await ui.unmount()
 })
 
 test('/mokkan is the skill\'s own slash command: nothing is registered, and the CLI path is looked up once', async ($, on) => {
@@ -664,7 +713,7 @@ test('a /clear, /resume or /branch refreshes the open pane, and only an open one
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('classic.SessionStart', () => ({}))
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const lists = () => ran.filter(a => a[2] === 'list').length
+  const lists = () => ran.filter(a => a[2] === 'sync').length
   await $.classic.SessionStart({ source: 'clear' })
   await clock.settle()
   expect(lists()).toBe(0)
@@ -705,7 +754,7 @@ test('/mokkan alone toggles the pane; with a verb it runs the CLI and shows its 
   expect(await mokkan('  ')).toBe('mokkan pane closed.')
   expect(panes).toEqual([])
 
-  const lists = () => ran.filter(a => a[2] === 'list').length
+  const lists = () => ran.filter(a => a[2] === 'sync').length
   expect(await mokkan('push milk and eggs')).toBe('mokkan said: push milk and eggs')
   expect(ran.at(-1)?.slice(2)).toEqual(['--argline', 'push milk and eggs', '--exit-zero'])
   await clock.settle()
@@ -872,6 +921,23 @@ test('a key no Button binds, typed while the pane holds the keys, is dropped and
   panes.length = 0
   expect(await type('f')).toEqual({ text: 'f', cursor: 1 })
   expect(opens).toEqual([])
+})
+
+test('a key typed while the pane never held the keys, or since it closed, costs no call to the engine', async ($, on) => {
+  const { clock, listed } = fakeCli(on)
+  on('prompt.edit', (_, e) => ({ text: e.inputText, cursor: 1 }))
+  const edit = ($ as unknown as { prompt: { edit: (e: PromptEditInput) => Promise<PromptEditResult> } }).prompt.edit
+  const type = (key: string) => edit({ origin: { kind: 'composer' }, key: { key }, text: '', cursor: 0, start: 0, end: 0, inputText: key })
+  expect(await type('x')).toEqual({ text: 'x', cursor: 1 })
+  expect(listed()).toBe(0)
+
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await ui.unmount()
+  await $.command.run({ command: 'mokkan:mokkan', args: '', ...RUN }) // closes it
+  const before = listed()
+  expect(await type('y')).toEqual({ text: 'y', cursor: 1 })
+  expect(listed()).toBe(before)
 })
 
 test('a todo row as long as the pane, or longer, stays one line of the body width', async ($, on) => {

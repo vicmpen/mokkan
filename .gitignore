@@ -6,3 +6,6 @@ dist/
 coverage/
 # written by Claude Code when the plugin loads from this checkout
 claude-plugin/.claude-plugin/types/
+.DS_Store
+.claude/settings.local.json
+.impeccable/hook.cache.json

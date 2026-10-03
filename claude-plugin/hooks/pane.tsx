@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { MokkanMessage, MokkanMode, MokkanReminder, MokkanTab, MokkanView } from '../types'
 
@@ -43,7 +43,9 @@ let said = 0
 let pending: { digit: number; at: number } | null = null
 /** True from the pane's opening to its first good list, which picks the tab it opens on. */
 let landing = false
-/** The CLI's argv, looked up once per load of this module (the first refresh's three calls share the lookup). */
+/** The poll that refreshes the pane every REFRESH_MS: running from the pane's opening to its closing. */
+let poll: Timer | null = null
+/** The CLI's argv, looked up once per load of this module. */
 let resolved: Promise<string[]> | null = null
 /** Whether the pane held the keys at its last draw, and when a draw last saw it let them go: a key no Button binds leaves the pane and reaches the prompt around that redraw, just before or just after it. */
 let heldKeys = false
@@ -103,7 +105,6 @@ const json = <T,>(out: string): T | null => {
     return null
   }
 }
-const reminders = (out: string) => (json<{ reminders: MokkanReminder[] }>(out)?.reminders ?? []).map(pick)
 const pick = (r: MokkanReminder): MokkanReminder => ({
   id: r.id, text: r.text, state: r.state, due_at: r.due_at,
   created_at: r.created_at, delivered_at: r.delivered_at ?? null, acknowledged_at: r.acknowledged_at ?? null, done_at: r.done_at ?? null,
@@ -113,36 +114,41 @@ async function refresh($: EngineInterface): Promise<void> {
   const mine = ++seq
   await update($, syncing, () => true)
   try {
-    // The heartbeat makes an open pane an active session: the server then waits for it to show what comes due.
-    const [list, done, balance] = await Promise.all([run($, ['list', '--all']), run($, ['done']), run($, ['balance']), run($, ['heartbeat', '--source', 'claude-code-pane'])])
+    // One process for the whole look: the list, the history, the balance and a heartbeat (which makes an open pane
+    // an active session: the server then waits for it to show what comes due), and delivering what is due.
+    const sync = await run($, ['sync', '--source', 'claude-code-pane', '--deliver'])
     if (mine !== seq) return
+    const got = sync.ok ? json<{ reminders: MokkanReminder[]; done: MokkanReminder[] | null; balance: number | null; delivered: string[] | null }>(sync.out) : null
     const before = await read($, view)
-    let next: MokkanView = list.ok
+    let next: MokkanView = got
       ? {
-          reminders: reminders(list.out),
-          done: done.ok ? reminders(done.out) : before.done,
-          balance: json<{ balance: number }>(balance.out)?.balance ?? before.balance,
+          reminders: got.reminders.map(pick),
+          done: got.done?.map(pick) ?? before.done,
+          balance: got.balance ?? before.balance,
           failure: null,
           fetchedAt: await $.clock.now(),
         }
-      : list.code === 1 // a user error on a bare list: not logged in, or the session expired
-        ? { ...EMPTY, failure: { kind: 'loggedOut', text: firstLine(list.out) } }
-        : { ...before, failure: { kind: 'offline', text: firstLine(list.out) || 'mokkan failed' } }
-    // A timed reminder that is due has been shown nowhere: toast it and mark it delivered, so the server emails it
-    // only if it isn't acked within its grace period. A todo is due the moment it is pushed: never.
-    const fired = list.ok ? next.reminders.filter(r => r.due_at !== null && r.state === 'due') : []
-    for (const r of fired) $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
-    if (fired.length > 0 && (await run($, ['deliver', ...fired.map(r => r.id)])).ok) {
-      if (mine !== seq) return
-      const at = new Date(await $.clock.now()).toISOString()
-      next = { ...next, reminders: next.reminders.map(r => (fired.includes(r) ? { ...r, state: 'delivered', delivered_at: at } : r)) }
+      : sync.code === 1 // a user error on a bare sync: not logged in, or the session expired
+        ? { ...EMPTY, failure: { kind: 'loggedOut', text: firstLine(sync.out) } }
+        : { ...before, failure: { kind: 'offline', text: firstLine(sync.out) || 'mokkan failed' } }
+    // A timed reminder that is due has been shown nowhere: toast it, and sync marked it delivered, so the server emails
+    // it only if it isn't acked within its grace period. A todo is due the moment it is pushed: never.
+    if (got) {
+      for (const r of next.reminders) if (r.due_at !== null && r.state === 'due') $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
+      const delivered = got.delivered ?? []
+      if (delivered.length > 0) {
+        const at = new Date(await $.clock.now()).toISOString()
+        next = { ...next, reminders: next.reminders.map(r => (delivered.includes(r.id) ? { ...r, state: 'delivered', delivered_at: at } : r)) }
+      }
     }
     await update($, view, () => next)
+    // The last good list paints the pane at once the next time it opens, in this session or another.
+    if (got) await $.store.set('view', next)
+    else if (next.failure?.kind === 'loggedOut') await $.store.delete('view')
     // It opens on Reminders while one is due, else on TODOs.
-    if (list.ok && landing) {
+    if (got && landing) {
       landing = false
-      const now = await $.clock.now()
-      await update($, tab, () => (next.reminders.some(r => isDue(r, now)) ? 'reminders' : 'todos'))
+      await land($, next)
     }
     // A row that left the tab (archived, reopened, or moved by w) takes the selection with it.
     const [sel, tb] = await Promise.all([read($, selected), read($, tab)])
@@ -150,6 +156,27 @@ async function refresh($: EngineInterface): Promise<void> {
   } finally {
     if (mine === seq) await update($, syncing, () => false)
   }
+}
+
+async function land($: EngineInterface, v: MokkanView): Promise<void> {
+  const now = await $.clock.now()
+  await update($, tab, () => (v.reminders.some(r => isDue(r, now)) ? 'reminders' : 'todos'))
+}
+
+/** Before the first look of this session: the last good list from `$.store`, which every session shares. */
+async function paintCached($: EngineInterface): Promise<void> {
+  const v = await read($, view)
+  if (v.fetchedAt !== null || v.failure !== null) return
+  const cached = (await $.store.get('view')) as MokkanView | undefined
+  if (!Array.isArray(cached?.reminders) || !Array.isArray(cached.done)) return
+  await update($, view, () => cached)
+  landing = false
+  await land($, cached)
+}
+
+/** Refreshes every REFRESH_MS while the pane is open; `ui.close` stops it. */
+function startPoll($: EngineInterface): void {
+  poll ??= $.clock.every(REFRESH_MS, () => void refresh($))
 }
 
 async function say($: EngineInterface, text: string, tone: NonNullable<MokkanMessage>['tone'] = 'ok'): Promise<void> {
@@ -186,6 +213,8 @@ async function act($: EngineInterface, verb: string, args: string[], done: strin
 async function open($: EngineInterface, asked: boolean): Promise<void> {
   await $.ui.open(asked ? { id: PANE, title: 'mokkan', columns: COLUMNS, focus: true } : { id: PANE, title: 'mokkan', columns: COLUMNS })
   landing = true
+  await paintCached($)
+  startPoll($)
   void refresh($)
 }
 
@@ -314,31 +343,27 @@ const HELP_TEXT = [
 type Action = { label: string; hotkey: string; needsField?: true; group?: true; run: () => unknown }
 
 export const register: Register = on => {
-  let autoOpened = false
   // The password as typed, in this module alone: never in $.state, never drawn, cleared after each attempt.
   let secret = ''
 
+  // A hot reload cancels the poll but leaves the pane open: start it again.
   on('session.start', async ($, e, next) => {
-    $.clock.every(REFRESH_MS, async () => {
-      if ((await $.ui.panes()).some(p => p.id === PANE)) await refresh($)
-    })
+    if ((await $.ui.panes()).some(p => p.id === PANE)) startPoll($)
+    return next(e)
+  })
+
+  // Closed by /mokkan, by the person or by an unload: nothing polls, and no key is taken for it.
+  on('ui.close', { id: PANE }, ($, e, next) => {
+    poll?.cancel()
+    poll = null
+    heldKeys = false
+    lostAt = 0
     return next(e)
   })
 
   // No session.start follows a /clear, /resume or /branch: an open pane reloads here instead of on the next tick.
   on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
     if ((await $.ui.panes()).some(p => p.id === PANE)) void refresh($)
-    return next(e)
-  })
-
-  // Opens unasked only where the pane would be a sidebar: the fullscreen layout, once it reports itself.
-  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
-    if (!autoOpened && e.viewport?.isFullscreen === true) {
-      autoOpened = true
-      $.clock.after(0, async () => {
-        if (!(await $.ui.panes()).some(p => p.id === PANE)) await open($, false)
-      })
-    }
     return next(e)
   })
 
@@ -378,6 +403,8 @@ export const register: Register = on => {
   // A key no Button binds leaves the pane for the prompt: one typed while the pane held the keys is dropped, and the pane takes them back.
   // ctrl/cmd combinations and pastes go on; Esc never reaches here.
   on('prompt.edit', async ($, e, next) => {
+    // Most keys never had the pane hold them: they reach the prompt with no call to the engine.
+    if (!heldKeys && lostAt === 0) return next(e)
     if (e.key === undefined || e.key.ctrl || e.key.meta || [...e.inputText].length !== 1) return next(e)
     const [panes, now] = await Promise.all([$.ui.panes(), $.clock.now()])
     const leaked = panes.some(p => p.id === PANE) && (heldKeys || (lostAt > 0 && now - lostAt < LEAK_MS))
@@ -607,12 +634,16 @@ export const register: Register = on => {
     const submit = async (raw: string) => {
       if (m.kind !== 'input') return
       const text = raw.trim()
+      const keep = () => update($, mode, was => (was.kind === 'input' ? { ...was, value: raw } : was))
+      if (!text && m.purpose === 'edit') {
+        await keep()
+        return say($, 'the text can’t be empty', 'error')
+      }
       if (!text) return cancel()
       const id = m.targetId ?? ''
       const was = v.reminders.find(r => r.id === id)
       const target = was?.text ?? ''
       const [dur = '', ...rest] = text.split(/\s+/)
-      const keep = () => update($, mode, was => (was.kind === 'input' ? { ...was, value: raw } : was))
       if (m.purpose === 'in' && (!DURATION.test(dur) || rest.length === 0)) {
         await keep()
         return say($, 'start with a duration: 2h call the bank', 'error')

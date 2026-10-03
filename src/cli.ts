@@ -14,6 +14,7 @@ import { ackCommand, deliverCommand, editCommand, inCommand, pushCommand, takeCo
 import { balanceCommand, buyCommand, openUrlDetached } from './commands/billing.js';
 import { heartbeatCommand } from './commands/heartbeat.js';
 import { feedbackCommand } from './commands/feedback.js';
+import { syncCommand } from './commands/sync.js';
 import { uiCommand } from './commands/ui.js';
 import { HOOK_BUDGET_MS, hookCommand, safeAppendHookLog } from './hooks.js';
 import { watchCommand } from './watcher.js';
@@ -71,6 +72,7 @@ const VALUE_FLAGS = new Set(['otp', 'source', 'interval']);
 const COMMAND_FLAGS = new Map<string, { boolean: string[]; value: string[] }>([
   ['edit', { boolean: ['clear-due'], value: ['text', 'in', 'at'] }],
   ['buy', { boolean: ['no-open'], value: ['pack'] }],
+  ['sync', { boolean: ['deliver'], value: [] }],
 ]);
 
 /**
@@ -153,6 +155,9 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan logout
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
+  mokkan sync [--source X] [--deliver]
+                                  list --all, done, balance and heartbeat in one call (the pane's refresh);
+                                  --deliver marks the due timed reminders delivered
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
   mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
@@ -325,6 +330,7 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
       case 'buy': return await buyCommand(ctx);
       case 'balance': return await balanceCommand(ctx);
       case 'heartbeat': return await heartbeatCommand(ctx);
+      case 'sync': return await syncCommand(ctx);
       case 'feedback': return await feedbackCommand(ctx, args);
       case 'watch': return await watchCommand(ctx);
       default:

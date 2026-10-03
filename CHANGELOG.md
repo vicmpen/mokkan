@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.3
+
+- **The pane syncs in one process.** `mokkan sync [--source X] [--deliver]` fetches the list, the history and the balance, sends a heartbeat and (with `--deliver`) delivers the due timed reminders over one connection. The pane makes this one call per refresh, where it used to start four or five processes.
+- **The pane opens on the last list it saw.** Each good sync is kept in the plugin's store, shared by every session, so the pane shows that list right away while it syncs. If the session starts offline, the pane keeps that list and its synced time instead of opening empty. Logging out clears it.
+- **No background work without the pane.** The 15-second poll runs only while the pane is open. Keys typed in the prompt make no calls to the pane unless it has recently held the keyboard.
+- **The pane no longer opens by itself** in fullscreen sessions. `/mokkan` opens it.
+- **An emptied edit is refused, not dropped.** In the pane and `mokkan ui`, saving an edit with no text now keeps the field open and says the text can’t be empty. Before, it closed the field silently. Cancelling still closes it. `mokkan edit` already refused it.
+
 ## 0.6.2
 
 - **Feedback.** `f` in the pane opens a feedback field (shift+enter for a new line) and `mokkan feedback <text>` sends it from a terminal or `/mokkan feedback …`. It is free, kept by the server and emailed to the developer (`FEEDBACK_EMAIL`), 10 an hour, up to 2000 characters. Needs a server with `POST /feedback`.

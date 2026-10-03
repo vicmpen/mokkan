@@ -51,7 +51,7 @@ The timings are the server's defaults. If you run your own server, they are `ACK
 
 ## The mod: a pane in Claude Code
 
-The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan` opens it, and closes it when it is open. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns and opens by itself when a session starts; on the main-screen layout it sits above the prompt. `Esc` hands the keyboard back and `ctrl+x tab` takes it again. While the pane has the keyboard, a key it doesn't use does nothing instead of landing in the prompt.
+The plugin ships a [mod](https://claude.dev/blog/getting-started-with-claude-code-mods/): a small TypeScript module that runs inside your Claude Code session, sees its events as they happen, and draws a pane. `/mokkan` opens it, and closes it when it is open. In the fullscreen layout (`/tui fullscreen`, the default in most terminals) the pane docks beside the transcript from 110 columns; on the main-screen layout it sits above the prompt. `Esc` hands the keyboard back and `ctrl+x tab` takes it again. While the pane has the keyboard, a key it doesn't use does nothing instead of landing in the prompt.
 
 It is laid out like `mokkan ui`: the header with your credits, `TODOs 2 │ Reminders 3 │ Archived 4`, the list, the last result, the keys, and the sync state on the bottom line. The pane draws its own rounded border, pale green while it has the keyboard and grey while it doesn't. Three tabs, each with its own count: TODOs holds the open todos (no due time), Reminders the open reminders (a due time, scheduled ones included), both in stack order, and Archived the finished ones. The pane opens on Reminders while one is due, and on TODOs otherwise. A row's bar is cyan for a todo and magenta for a reminder; `·` marks an acknowledged one and `✓` an archived one. Rows are numbered within their tab. A reminder's time sits on the right and always says which way it points: `in 40m`, `Wed 17:00`, `overdue 40m` (red), `2h ago`. The selected row gets its history underneath (`todo · added 3h ago · shown 1h ago · acked 5m ago`). `↑` `↓` and `Tab` walk the pane's buttons, and the row they land on is selected, marked with `▸` and bold; a click or a row's number selects it directly. Rows past the ninth are typed as two digits within a second (`1` then `2` is row 12), and with ten or more rows `0` joins the keys for rows 10, 20 and so on. Selecting never changes anything. While the pane doesn't have the keyboard it shows `ctrl+x tab to use keys` in place of the commands:
 
@@ -59,7 +59,7 @@ It is laid out like `mokkan ui`: the header with your credits, `TODOs 2 │ Remi
 |---|---|---|
 | `t` | `todo` | add a todo: type what to remember (1 credit) |
 | `r` | `reminder` | schedule a reminder: `2h call the bank`, the first word is a duration (1 credit, +1 held for the email) |
-| `e` | `edit` | edit the selected one's text (every 3rd edit costs 1 credit) |
+| `e` | `edit` | edit the selected one's text; it can't be left empty (every 3rd edit costs 1 credit) |
 | `w` | `when` | set its due time (`2h`), or `clear` it to make it a todo again |
 | `d` | `archive` / `reopen` | archive it (`mokkan done`); in Archived, reopen it |
 | `a` | `ack` | acknowledge it: you've seen it, so its email stops |
@@ -147,7 +147,7 @@ Add `--json` for machine-readable output. `mokkan help` lists everything.
 
 Acknowledging and finishing are different acts. `mokkan ack` says "seen": it stops the email for a due reminder and releases its reserved credit, but the reminder stays on the list. `mokkan done <id>` finishes a reminder anywhere on the list, exactly as `pop` finishes the top one; it moves to the history that `mokkan done` shows. `mokkan undone <id>` puts a finished reminder back where it was. A reopened reminder that had a due time comes back acknowledged, so it is never emailed again. Both are free.
 
-`mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
+`mokkan edit` changes one reminder in place. Give it the number shown by `mokkan list` (with `--all`, the number shown by `mokkan list --all`) or an id prefix of at least 4 characters. The new text is the rest of the words: `mokkan edit 2 --in 2h call mom at 5`; it can't be empty. `--at` needs a full ISO-8601 time with a zone (`2026-10-01T09:00:00Z`). Put all your changes in one call, because every call counts as one edit. A due time can be changed only while the reminder is still scheduled or due and its email has not been sent. If the list changed since you last read it, a numbered edit stops with "The list changed" and edits nothing.
 
 ## Terminal UI
 
@@ -158,7 +158,7 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 | `↑` `↓`, `Home`, `End`, `1`–`9` | move the selection (selecting never changes anything) |
 | `t` | add a todo: type what to remember, `Enter` adds it (1 credit) |
 | `r` | schedule a reminder: `2h call the bank`, the first word is a duration |
-| `e` | edit the selected one's text (every 3rd edit costs 1 credit) |
+| `e` | edit the selected one's text; it can't be left empty (every 3rd edit costs 1 credit) |
 | `w` | set its due time: a duration (turns a todo into a reminder), or `clear` to make it a todo again |
 | `d` | archive the selected one (`mokkan done`); in Archived, reopen it (the footer says `reopen` there) |
 | `a` / `A` | acknowledge the selected one / all |
