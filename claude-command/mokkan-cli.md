@@ -1,5 +1,5 @@
 ---
-description: mokkan from your PATH, through Claude — push, in, edit, ack, done, list, balance… (the mokkan plugin's /mokkan runs them directly and toggles the pane). Never pass --force, logout or buy unless the user typed them.
+description: mokkan from your PATH, through Claude — push, in, edit, ack, done, list, balance… (the mokkan plugin's /mokkan runs them directly and toggles the pane). Never pass --force, logout or buy unless the user typed them, and never accept or delete-account.
 argument-hint: '[list | push <text> | pop | dequeue | in <duration> <text> | edit <n|id> [--all] [--in <duration> | --at <iso> | --clear-due] [new text] | ack <id|all> | done [<id>...] | undone <id>... | pending | status | balance | buy | register <email> | login <email> | logout]  (text must not contain $ ` " \ — use mokkan push in a terminal for those)'
 allowed-tools: Bash(mokkan:*)
 ---
@@ -7,7 +7,7 @@ allowed-tools: Bash(mokkan:*)
 
 !`mokkan --argline "$ARGUMENTS" --exit-zero 2>&1`
 
-Show the output above to the user verbatim, including the ids in square brackets. Do not run any other command and do not paraphrase. If the output asks the user to finish something in a terminal (registration or login need a hidden password prompt), tell them exactly that command; if `mokkan` is not installed in their terminal (for example they only have the Claude Code plugin), `npx @vicmpen/mokkan-cli <the same arguments>` runs it. Do not run `mokkan ui`, `mokkan watch`, `mokkan register` or `mokkan login` yourself, through this command or otherwise, beyond what the output above already shows (`mokkan ui` is the user's full-screen terminal view; if they ask for it, tell them to run `mokkan ui` in a terminal). If the output is empty, say "No output from mokkan."
+Show the output above to the user verbatim, including the ids in square brackets. Do not run any other command and do not paraphrase. If the output asks the user to finish something in a terminal (registration or login need a hidden password prompt), tell them exactly that command; if `mokkan` is not installed in their terminal (for example they only have the Claude Code plugin), `npx @vicmpen/mokkan-cli <the same arguments>` runs it. Do not run `mokkan ui`, `mokkan watch`, `mokkan register` or `mokkan login` yourself, through this command or otherwise, beyond what the output above already shows (`mokkan ui` is the user's full-screen terminal view; if they ask for it, tell them to run `mokkan ui` in a terminal). Never run `mokkan accept` or `mokkan delete-account`, through this command, a direct Bash call (`mokkan accept`, `npx @vicmpen/mokkan-cli accept`) or otherwise, with or without `--yes`: only the user accepts the privacy policy (in a terminal or in the pane) or deletes their account (in a terminal). If the output above asks to accept the privacy policy, tell the user to run `mokkan accept` in a terminal (or `npx @vicmpen/mokkan-cli accept` if mokkan isn't installed), and do not retry the command. If the output is empty, say "No output from mokkan."
 
 ## Credits (paid use)
 

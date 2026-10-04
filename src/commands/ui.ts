@@ -2,11 +2,13 @@ import type { Ctx } from '../cli.js';
 import { UserError } from '../errors.js';
 import { TuiApp } from '../tui/app.js';
 import { runTerminal } from '../tui/terminal.js';
+import { deleteAccountCommand } from './privacy.js';
 
 /**
  * `mokkan ui`: the full-screen dashboard. Needs a real terminal (from /mokkan:mokkan there is none, and the
  * message is all the user sees). Without credentials it opens on the login screen; the client saves credentials
- * on login and clears them on session expiry, so no credential handling lives here.
+ * on login and clears them on session expiry, so no credential handling lives here. `d` in the privacy acceptance
+ * view leaves the full screen first: the delete-account flow asks its questions in the plain terminal.
  */
 export async function uiCommand(ctx: Ctx): Promise<number> {
   const { io, client } = ctx;
@@ -14,5 +16,6 @@ export async function uiCommand(ctx: Ctx): Promise<number> {
   const app = new TuiApp({
     client, email: client.email, host: new URL(client.baseUrl).host, now: ctx.now, openUrl: io.openUrl,
   });
-  return runTerminal(app, io, io.tty);
+  const code = await runTerminal(app, io, io.tty);
+  return app.deleteRequested ? deleteAccountCommand(ctx) : code;
 }

@@ -1,6 +1,7 @@
 import { ApiError, NetworkError } from '../client.js';
-import { clearCredentials } from '../credentials.js';
+import { clearCredentials, type Credentials } from '../credentials.js';
 import { UserError } from '../errors.js';
+import { formatPolicy, isPrivacyStale } from '../privacy.js';
 import type { Ctx } from '../cli.js';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
@@ -26,9 +27,29 @@ async function requireOtp(ctx: Ctx, email: string): Promise<string> {
   return ctx.io.prompt('One-time code: ', false);
 }
 
+/** Shows the policy and asks (terminal only); returns the version agreed to. Anything but `y` cancels, before any request. */
+async function agreeToPolicy(ctx: Ctx): Promise<string> {
+  const p = await ctx.client.privacy();
+  ctx.io.stdout(formatPolicy(p));
+  const answer = (await ctx.io.prompt('Accept and continue? y yes · n cancel ', false)).trim().toLowerCase();
+  if (answer !== 'y') throw new UserError('Registration cancelled.');
+  return p.version;
+}
+
+/**
+ * An account cannot exist without the privacy policy. With a terminal the policy is shown and agreed to before the
+ * code is sent (or used, for --complete); without one, `--accept-privacy <version>` says the caller (the pane) showed
+ * that version. A policy that changed in between is a 409: with a terminal the new one is shown and the same code is
+ * sent again once.
+ */
 export async function registerCommand(ctx: Ctx, args: string[]): Promise<number> {
   const { io, client, flags } = ctx;
   const email = await requireEmail(ctx, args[0], 'mokkan register you@example.com');
+  const given = flags['accept-privacy'];
+  if ((typeof given !== 'string' || given === '') && !io.isTTY) {
+    throw new UserError('Register in a terminal, or pass --accept-privacy <version> after showing the policy');
+  }
+  let version = typeof given === 'string' && given !== '' ? given : await agreeToPolicy(ctx);
   if (flags.complete !== true) {
     await client.registerStart(email);
     io.stdout(`One-time code sent to ${email}. (Dev server: read it from GET /dev/outbox?to=${email} or server/outbox.jsonl.)\n`);
@@ -41,7 +62,18 @@ export async function registerCommand(ctx: Ctx, args: string[]): Promise<number>
   const otp = await requireOtp(ctx, email);
   const password = await requirePassword(ctx, `New password (min ${MIN_PASSWORD_LENGTH} chars): `);
   if (password.length < MIN_PASSWORD_LENGTH) throw new UserError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-  const creds = await client.registerComplete(email, otp, password);
+  let creds: Credentials;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      creds = await client.registerComplete(email, otp, password, version);
+      break;
+    } catch (err) {
+      // The server checks the version before it uses the code, so the same code still works.
+      if (!isPrivacyStale(err) || !io.isTTY || attempt > 0) throw err;
+      io.stdout('The privacy policy has just changed. The new version:\n');
+      version = await agreeToPolicy(ctx);
+    }
+  }
   io.stdout(`Registered and logged in as ${creds.email} (${client.baseUrl}).\n`);
   return 0;
 }

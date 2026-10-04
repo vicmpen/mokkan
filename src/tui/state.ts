@@ -42,9 +42,17 @@ export interface LoginState {
   error: { text: string; tone: Tone } | null;
 }
 
+/**
+ * The acceptance view, shown when the server answers 403 privacy_not_accepted. `version` and `url` come from the 403
+ * until GET /privacy answers; `summary` is null until then.
+ */
+export interface PrivacyState { version: string | null; url: string; summary: string[] | null }
+
 export interface TuiState {
-  screen: 'login' | 'dashboard';
+  screen: 'login' | 'dashboard' | 'privacy';
   login: LoginState;
+  /** Set while `screen` is `privacy`. */
+  privacy: PrivacyState | null;
   tab: Tab;
   /** Every non-done reminder, top of stack first (`list('all')`): the todos and reminders views. */
   reminders: Reminder[];
@@ -83,6 +91,7 @@ export function initialState(email: string | null, host: string): TuiState {
   return {
     screen: email === null ? 'login' : 'dashboard',
     login: emptyLogin(),
+    privacy: null,
     tab: 'todos', reminders: [], done: null, version: null, selected: 0, scroll: 0,
     email: email ?? '', host, credits: null,
     fetchedAt: null, refreshing: false, error: null, message: null, mode: { kind: 'normal' },

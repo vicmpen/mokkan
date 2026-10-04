@@ -7,7 +7,7 @@ import { MAX_INPUT_CODE_POINTS } from '../src/tui/state.js';
 import { displayWidth } from '../src/tui/text.js';
 import { decodeKeys, PASTE_END, PASTE_START } from '../src/tui/keys.js';
 import { CliHarness, NOW } from './cli-harness.js';
-import { FakeServer, tokenPair, type FakeAccount } from './fake-server.js';
+import { FakeServer, PRIVACY_SUMMARY, tokenPair, type FakeAccount, type FakePrivacy } from './fake-server.js';
 
 export const ID1 = 'aaaa1111-0000-0000-0000-000000000000'; // bottom of the active list
 export const ID2 = 'bbbb2222-0000-0000-0000-000000000000'; // top of the active list
@@ -725,5 +725,49 @@ describe('TuiApp login screen', () => {
     await type(app, 'a@example.com\tcorrect horse\r');
     expect(app.state.screen).toBe('dashboard');
     expect(app.rows()).toHaveLength(2);
+  });
+});
+
+describe('TuiApp privacy acceptance view', () => {
+  let server: FakeServer;
+  let h: CliHarness;
+  let privacy: FakePrivacy;
+  const strip = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+  beforeEach(async () => {
+    server = new FakeServer();
+    await server.start();
+    h = new CliHarness();
+    seed(server);
+    privacy = server.withPrivacy();
+  });
+  afterEach(async () => { await server.stop(); h.dispose(); });
+
+  it('shows the acceptance view; y accepts and goes back to the list', async () => {
+    const app = makeApp(server, h);
+    await app.refresh();
+    expect(app.state.screen).toBe('privacy');
+    expect(app.state.privacy).toEqual({ version: '2026-10-04', url: 'https://mokkan.dev/privacy', summary: PRIVACY_SUMMARY });
+    const screen = strip(app.render({ columns: 80, rows: 24 }, new Date()).join('\n'));
+    expect(screen).toContain('The privacy policy (version 2026-10-04) needs your acceptance.');
+    expect(screen).toContain(PRIVACY_SUMMARY[0].slice(0, 40));
+    expect(screen).toContain('Full text: https://mokkan.dev/privacy');
+    expect(screen).toContain('y accept · n quit · d delete');
+    await type(app, 'xy');
+    expect(server.last('POST', '/privacy/accept')?.body).toEqual({ version: '2026-10-04' });
+    expect(app.state.screen).toBe('dashboard');
+    expect(app.state.message).toEqual({ text: 'Privacy policy accepted.', tone: 'green' });
+    expect(app.rows().map((r) => r.id)).toEqual([ID2, ID1]);
+  });
+
+  it('a 409 shows the new version; n quits with exit 4', async () => {
+    const app = makeApp(server, h);
+    await app.refresh();
+    privacy.version = '2026-11-01';
+    await type(app, 'y');
+    expect(app.state.screen).toBe('privacy');
+    expect(app.state.privacy?.version).toBe('2026-11-01');
+    expect(app.state.message?.tone).toBe('yellow');
+    await type(app, 'n');
+    expect(app.exitCode).toBe(4);
   });
 });

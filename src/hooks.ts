@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ApiError } from './client.js';
 import { hookLogPath } from './credentials.js';
 import { SessionExpiredError, UserError } from './errors.js';
+import { isPrivacyRequired } from './privacy.js';
 import { ACK_HINT, formatPending, formatReminderLine } from './format.js';
 import type { Reminder } from './types.js';
 import type { Ctx } from './cli.js';
@@ -85,8 +86,9 @@ export function safeAppendHookLog(env: NodeJS.ProcessEnv, kind: string, err: unk
       markNotified(env);
       return;
     }
-    if (err instanceof ApiError && (err.status === 402 || err.status === 429)) {
-      // Out of credits or rate limited: logged at most hourly, like "not logged in", so hooks never spam hook.log.
+    if (err instanceof ApiError && (err.status === 402 || err.status === 429 || isPrivacyRequired(err))) {
+      // Out of credits, rate limited or the privacy policy not accepted: logged at most hourly, like "not logged
+      // in", so hooks never spam hook.log.
       const suffix = `.${err.status}`;
       if (notifiedRecently(env, suffix)) return;
       appendHookLog(env, kind, err.message);

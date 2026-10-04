@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { MokkanMessage, MokkanMode, MokkanReminder, MokkanTab, MokkanView } from '../types'
+import type { MokkanMessage, MokkanMode, MokkanPolicy, MokkanReminder, MokkanTab, MokkanView } from '../types'
 
 const PANE = 'mokkan'
 const COLUMNS = 44
@@ -17,6 +17,7 @@ const message = atom({ plugin: 'mokkan', key: 'message' } as const, null as Mokk
 const busy = atom({ plugin: 'mokkan', key: 'busy' } as const, null as string | null)
 const syncing = atom({ plugin: 'mokkan', key: 'syncing' } as const, false)
 const help = atom({ plugin: 'mokkan', key: 'help' } as const, false)
+const privacy = atom({ plugin: 'mokkan', key: 'privacy' } as const, null as MokkanPolicy | null)
 /** The states pop and dequeue take from (`mokkan list` without `--all`): never a scheduled one. */
 const ACTIVE = new Set<MokkanReminder['state']>(['due', 'delivered', 'acknowledged'])
 /** Pale green: the pane's own border while it holds the keys (the engine's frame takes no colour from a plugin). */
@@ -69,14 +70,41 @@ async function find($: EngineInterface): Promise<string[]> {
   return ['mokkan']
 }
 
-/** `code` is the CLI's exit code: 1 a user error (logged out included), 2 the server or network; null when it never ran. */
+/** Exit code 4: the account must accept an updated privacy policy before the server does anything more for it. */
+const PRIVACY_REQUIRED = 4
+
+/**
+ * `code` is the CLI's exit code: 1 a user error (logged out included), 2 the server or network, 4 the privacy policy to
+ * accept; null when it never ran. A 4 shows the acceptance view; registration, having no account yet, handles its own.
+ */
 async function run($: EngineInterface, args: string[], env?: Record<string, string>): Promise<{ ok: boolean; code: number | null; out: string }> {
+  let r: { ok: boolean; code: number | null; out: string }
   try {
     const { exitCode, stdout, stderr } = await $.process.run([...(await cli($)), ...args, '--json'], { timeoutMs: 15_000, env })
-    return { ok: exitCode === 0, code: exitCode, out: exitCode === 0 ? stdout : (stderr || stdout).trim() }
+    r = { ok: exitCode === 0, code: exitCode, out: exitCode === 0 ? stdout : (stderr || stdout).trim() }
   } catch (err) {
     return { ok: false, code: null, out: err instanceof Error ? err.message : String(err) }
   }
+  if (r.code === PRIVACY_REQUIRED && args[0] !== 'register') await gate($)
+  return r
+}
+
+/** `mokkan privacy --json`: needs no login; null, said on the status line, when it fails. */
+async function policy($: EngineInterface): Promise<MokkanPolicy | null> {
+  const r = await run($, ['privacy'])
+  const p = r.ok ? json<MokkanPolicy>(r.out) : null
+  if (typeof p?.version === 'string' && typeof p.url === 'string' && Array.isArray(p.summary)) return p
+  await say($, firstLine(r.out) || 'could not fetch the privacy policy', 'error')
+  return null
+}
+
+/** The acceptance view in place of the list, with the policy as it is now; whatever was being typed or asked is dropped. */
+async function gate($: EngineInterface): Promise<void> {
+  const p = await policy($)
+  if (!p) return
+  await update($, privacy, () => p)
+  await update($, mode, () => NORMAL)
+  await update($, help, () => false)
 }
 
 /** `/mokkan <words>`: the CLI's own text, as the slash command shows it (`--exit-zero` puts its errors on stdout too). */
@@ -119,6 +147,8 @@ async function refresh($: EngineInterface): Promise<void> {
     const sync = await run($, ['sync', '--source', 'claude-code-pane', '--deliver'])
     if (mine !== seq) return
     const got = sync.ok ? json<{ reminders: MokkanReminder[]; done: MokkanReminder[] | null; balance: number | null; delivered: string[] | null }>(sync.out) : null
+    // The policy to accept (run showed it): the account and its list stand, so the cached list stays for after.
+    if (sync.code === PRIVACY_REQUIRED) return
     const before = await read($, view)
     let next: MokkanView = got
       ? {
@@ -142,6 +172,7 @@ async function refresh($: EngineInterface): Promise<void> {
       }
     }
     await update($, view, () => next)
+    if (got || next.failure?.kind === 'loggedOut') await update($, privacy, () => null)
     // The last good list paints the pane at once the next time it opens, in this session or another.
     if (got) await $.store.set('view', next)
     else if (next.failure?.kind === 'loggedOut') await $.store.delete('view')
@@ -203,10 +234,12 @@ async function act($: EngineInterface, verb: string, args: string[], done: strin
   const ok = await work($, verb, async () => {
     await first?.()
     const r = await run($, args)
+    // A 4 has shown the acceptance view, which says it all; a refresh would only ask again.
+    if (r.code === PRIVACY_REQUIRED) return null
     await say($, r.ok ? done : firstLine(r.out) || 'failed', r.ok ? 'ok' : 'error')
     return r.ok
   })
-  if (ok !== undefined) void refresh($)
+  if (ok !== undefined && ok !== null) void refresh($)
   return ok === true
 }
 
@@ -337,7 +370,10 @@ const HELP_TEXT = [
   'A todo costs 1 credit. A reminder costs 1, plus 1 held for its email and given back if you ack it first. Every 3rd edit costs 1; the rest is free.',
   'b opens Stripe Checkout to add credits. In a terminal, mokkan ui opens this full screen.',
   'f sends feedback to the mokkan developer, free; shift+enter starts a new line.',
+  'Privacy policy: mokkan.dev/privacy. To delete your account and everything on it, run mokkan delete-account in a terminal (or npx @vicmpen/mokkan-cli delete-account).',
 ]
+/** Under the acceptance view: the pane can't delete an account, so it names the terminal command, both ways (the pane's own CLI is never the one on PATH). */
+const DELETE_INSTEAD = 'delete instead: in a terminal run mokkan delete-account (or npx @vicmpen/mokkan-cli delete-account)'
 
 /** `group`: the key hints start a new line before it, one line per kind of key. */
 type Action = { label: string; hotkey: string; needsField?: true; group?: true; run: () => unknown }
@@ -422,8 +458,8 @@ export const register: Register = on => {
     const t = $.ui.resolve(e)
     const { Box, Text, Button } = t
     const Input = e.surface !== 'mobile' && 'Input' in t ? t.Input : null // mobile has no Input
-    const [v, m, sel, tb, msg, verb, sync, helping, now] = await Promise.all([
-      read($, view), read($, mode), read($, selected), read($, tab), read($, message), read($, busy), read($, syncing), read($, help), $.clock.now(),
+    const [v, m, sel, tb, msg, verb, sync, helping, gated, now] = await Promise.all([
+      read($, view), read($, mode), read($, selected), read($, tab), read($, message), read($, busy), read($, syncing), read($, help), read($, privacy), $.clock.now(),
     ])
     // The terminal gets the pane's own border, two columns of the body; the remote surfaces draw their own focus.
     const framed = e.surface === 'terminal'
@@ -502,22 +538,51 @@ export const register: Register = on => {
       if (!target) return say($, 'the stack is empty', 'note')
       return update($, mode, (): MokkanMode => ({ kind: 'confirm', action, target: target.text }))
     }
+    // Registration shows the policy's summary first, as `mokkan register` does in a terminal.
     const startAuth = async (flow: 'login' | 'register') => {
       secret = ''
-      await update($, mode, (): MokkanMode => ({ kind: 'auth', flow, step: 'email', email: '', otp: '', masked: '' }))
+      const p = flow === 'register' ? await work($, 'fetching the privacy policy…', () => policy($)) : null
+      if (flow === 'register' && !p) return
+      await update($, mode, (): MokkanMode => ({ kind: 'auth', flow, step: p ? 'policy' : 'email', email: '', otp: '', masked: '', policy: p ?? null }))
+      if (!p) void $.ui.focus({ requestId: PANE, key: 'auth' }).catch(() => {})
+    }
+    /** y on the summary: on to the email, or back to the password when a changed policy was shown again after the code. */
+    const continueAuth = async () => {
+      await update($, mode, (was): MokkanMode => (was.kind === 'auth' ? { ...was, step: was.otp ? 'password' : 'email' } : was))
       void $.ui.focus({ requestId: PANE, key: 'auth' }).catch(() => {})
+    }
+    const accept = async (p: MokkanPolicy) => {
+      const accepted = await work($, 'accepting…', async () => {
+        const r = await run($, ['accept', '--yes', '--version', p.version])
+        // 4: the policy changed while it was shown; run has shown the new one.
+        if (r.code === PRIVACY_REQUIRED) return false
+        if (!r.ok) {
+          await say($, firstLine(r.out) || 'failed', 'error')
+          return false
+        }
+        await update($, privacy, () => null)
+        await say($, 'privacy policy accepted')
+        return true
+      })
+      if (accepted) await refresh($)
     }
 
     const toggleHelp = () => update($, help, was => !was)
     // As `mokkan ui`'s b: the CLI opens the checkout itself, and only a Stripe address.
     const buy = () => work($, 'opening checkout…', async () => {
       const r = await run($, ['buy'])
+      if (r.code === PRIVACY_REQUIRED) return
       if (!r.ok) return say($, firstLine(r.out) || 'failed', 'error')
       await say($, json<{ opened?: boolean }>(r.out)?.opened === true
         ? 'Opened Stripe Checkout in your browser; the balance updates after payment.'
         : 'Could not open a browser here. Run: mokkan buy --no-open (prints the link).')
     })
-    const keys: Record<string, Action> = helping
+    const keys: Record<string, Action> = gated
+      ? {
+          accept: { label: 'accept', hotkey: 'y', run: () => accept(gated) },
+          close: { label: 'close', hotkey: 'n', run: () => $.ui.close({ id: PANE }) },
+        }
+      : helping
       ? {
           help: { label: 'back', hotkey: 'h', run: toggleHelp },
           close: { label: 'close', hotkey: 'q', run: () => $.ui.close({ id: PANE }) },
@@ -592,13 +657,20 @@ export const register: Register = on => {
       const masked = '•'.repeat([...secret].length)
       return update($, mode, was => (was.kind === 'auth' ? { ...was, masked } : was))
     }
+    /** The policy changed during registration: its new summary, then on with what was typed (the code stands). */
+    const showAgain = async (was: Extract<MokkanMode, { kind: 'auth' }>) => {
+      const p = await work($, 'fetching the privacy policy…', () => policy($))
+      if (!p) return update($, mode, () => was)
+      await update($, mode, (): MokkanMode => ({ ...was, step: 'policy', policy: p }))
+      await say($, 'the privacy policy changed: read it again', 'note')
+    }
     const authStep = async (raw: string) => {
       if (m.kind !== 'auth') return
       const text = raw.trim()
       if (m.step === 'email') {
         if (!text) return cancel()
         if (m.flow === 'login') return update($, mode, (): MokkanMode => ({ ...m, step: 'password', email: text }))
-        const r = await work($, 'sending code…', () => run($, ['register', text, '--start']))
+        const r = await work($, 'sending code…', () => run($, ['register', text, '--start', '--accept-privacy', m.policy?.version ?? '']))
         if (!r) return
         if (!r.ok) {
           await update($, mode, (): MokkanMode => ({ ...m, email: raw }))
@@ -621,8 +693,9 @@ export const register: Register = on => {
       }
       const r = await work($, m.flow === 'login' ? 'logging in…' : 'registering…', () => m.flow === 'login'
         ? run($, ['login', m.email], { MOKKAN_PASSWORD: password })
-        : run($, ['register', '--complete', m.email, '--otp', m.otp], { MOKKAN_PASSWORD: password }))
+        : run($, ['register', '--complete', m.email, '--otp', m.otp, '--accept-privacy', m.policy?.version ?? ''], { MOKKAN_PASSWORD: password }))
       if (!r) return
+      if (r.code === PRIVACY_REQUIRED) return showAgain({ ...m, masked: '' })
       if (!r.ok) {
         await retry()
         return say($, firstLine(r.out) || `${m.flow} failed`, 'error')
@@ -682,7 +755,8 @@ export const register: Register = on => {
           {!loggedOut && <Text color={v.balance === null || v.balance >= 10 ? undefined : v.balance <= 0 ? 'red' : 'yellow'} dimColor={v.balance === null || v.balance >= 10}>{balance}</Text>}
         </Box>
         {helping && <Text bold> Help</Text>}
-        {!loggedOut && !helping && (
+        {gated && <Text bold> Privacy policy updated</Text>}
+        {!loggedOut && !helping && !gated && (
           <Box>
             <Text> </Text>
             {TABS.map(([key, name], i) => (
@@ -694,7 +768,15 @@ export const register: Register = on => {
           </Box>
         )}
         {rule}
-        {helping ? (
+        {gated ? (
+          <Box key="privacy" flexDirection="column" paddingLeft={1}>
+            {gated.summary.map((line, i) => <Text key={`summary-${i}`} wrap="wrap">{line}</Text>)}
+            <Text> </Text>
+            <Text wrap="wrap">{gated.url}</Text>
+            <Text> </Text>
+            <Text dimColor wrap="wrap">{DELETE_INSTEAD}</Text>
+          </Box>
+        ) : helping ? (
           <Box key="help" flexDirection="column" paddingLeft={1}>
             <Text wrap="wrap">{HELP_INTRO}</Text>
             <Text> </Text>
@@ -784,13 +866,26 @@ export const register: Register = on => {
         )}
         {m.kind === 'auth' && Input && (
           <Box flexDirection="column" paddingLeft={1}>
+            {m.step === 'policy' && m.policy && (
+              <Box flexDirection="column">
+                {m.policy.summary.map((line, i) => <Text key={`summary-${i}`} wrap="wrap">{line}</Text>)}
+                <Text wrap="wrap">{m.policy.url}</Text>
+                <Box>
+                  <Button key="yes" hotkey="y" plain onPress={go(continueAuth)}>continue</Button>
+                  <Text dimColor> · </Text>
+                  <Button key="no" hotkey="n" plain onPress={go(cancel)}>cancel</Button>
+                </Box>
+              </Box>
+            )}
             {m.step === 'email' && <Input key="auth" autoFocus label={`${m.flow} email`} placeholder="you@example.com" value={m.email} submitLabel={m.flow === 'login' ? 'next' : 'send code'} onSubmit={go(authStep)} />}
             {m.step === 'otp' && <Input key="auth" autoFocus label="one-time code" placeholder={`the code emailed to ${m.email}`} value={m.otp} submitLabel="next" onSubmit={go(authStep)} />}
             {m.step === 'password' && <Input key="auth" autoFocus label={m.flow === 'login' ? `password for ${m.email}` : 'new password (10+ characters)'} placeholder="hidden as you type" value={m.masked} submitLabel={m.flow === 'login' ? 'log in' : 'register'} onInput={typedSecret} onSubmit={go(authStep)} />}
-            <Box gap={1}>
-              <Button key="cancel" plain onPress={go(cancel)}>cancel</Button>
-              <Text dimColor>(Tab to it, then Enter)</Text>
-            </Box>
+            {m.step !== 'policy' && (
+              <Box gap={1}>
+                <Button key="cancel" plain onPress={go(cancel)}>cancel</Button>
+                <Text dimColor>(Tab to it, then Enter)</Text>
+              </Box>
+            )}
           </Box>
         )}
         {m.kind === 'confirm' && (

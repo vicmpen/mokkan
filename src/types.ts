@@ -22,7 +22,13 @@ export interface TokenPair {
 export interface ListResponse { version: number; reminders: Reminder[] }
 export interface ReminderResponse { version: number; reminder: Reminder }
 export interface PendingResponse { due: Reminder[]; awaiting_ack: Reminder[] }
-export interface MeResponse { email: string; last_heartbeat_at: string | null; session_active: boolean; credit_balance: number }
+/** `reminder_count`: the open (not done) reminders; `privacy_version`: the policy version the account accepted. */
+export interface MeResponse {
+  email: string; last_heartbeat_at: string | null; session_active: boolean; credit_balance: number;
+  reminder_count: number; privacy_version: string;
+}
+/** GET /privacy: the current policy version, the full text's address and the short summary the clients show. */
+export interface PrivacyResponse { version: string; url: string; summary: string[] }
 export interface HeartbeatResponse { active_until: string }
 export interface DeliverResponse { version: number; delivered: string[] }
 export interface AckResponse { version: number; acknowledged: string[] }

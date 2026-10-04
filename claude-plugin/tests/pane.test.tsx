@@ -10,7 +10,7 @@ const C = 'c3c3c3c3-0000-4000-8000-000000000003'
 const D = 'd4d4d4d4-0000-4000-8000-000000000004'
 const E = 'e5e5e5e5-0000-4000-8000-000000000005'
 const row = (id: string, text: string, state: string, due: number | null, more: Record<string, unknown> = {}) => ({
-  id, text, state, position: 0, due_at: due === null ? null : at(due), created_at: at(-180), delivered_at: null, acknowledged_at: null, done_at: null, ...more,
+  id, text, state, position: 0, due_at: due === null ? null : at(due), created_at: at(-180), delivered_at: null as string | null, acknowledged_at: null, done_at: null, ...more,
 })
 const STACK = () => [
   row(A, 'renew the TLS cert', 'delivered', null, { delivered_at: at(-60) }),
@@ -21,6 +21,10 @@ const STACK = () => [
 const DONE = () => [row(E, 'renew the domain', 'done', null, { created_at: at(-1440), done_at: at(-120) })]
 const result = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
 const OK = (stdout: string) => result(0, stdout)
+const POLICY = '2026-10-04'
+const summary = (version: string) => [`mokkan stores your email and reminders (policy ${version}).`, 'Delete your account any time with `mokkan delete-account` in a terminal.']
+const DELETE_LINE = 'delete instead: in a terminal run mokkan delete-account (or npx @vicmpen/mokkan-cli delete-account)'
+const flag = (argv: readonly string[], name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined)
 
 const PANE = {
   component: 'Pane',
@@ -51,7 +55,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
   on('fs.stat', () => { stats++; return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } } })
   const ran: string[][] = []
   const envs: Record<string, string>[] = []
-  const session = { loggedIn: true, offline: false, opens: true, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number> }
+  const session = { loggedIn: true, offline: false, opens: true, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number>, policy: POLICY, accepted: POLICY }
   on('process.run', async (_, e) => {
     ran.push([...e.argv])
     envs.push(e.init?.env ?? {})
@@ -61,11 +65,25 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
     if (session.slow[cmd]) await clock.sleep(session.slow[cmd]!)
     if (session.fail[cmd]) return result(1, '', `${session.fail[cmd]}\n`)
     if (session.offline) return result(2, '', 'Could not reach the server.\n')
-    if (cmd === 'register' && e.argv.includes('--complete')) { session.loggedIn = true; return OK('Registered and logged in.\n') }
-    if (cmd === 'register') return OK('One-time code sent.\n')
+    if (cmd === 'privacy') return OK(JSON.stringify({ version: session.policy, url: 'https://mokkan.dev/privacy', summary: summary(session.policy) }))
+    if (cmd === 'register') {
+      const v = flag(e.argv, '--accept-privacy')
+      if (v === undefined) return result(1, '', 'Register in a terminal, or pass --accept-privacy <version> after showing the policy\n')
+      if (v !== session.policy) return result(4, '', 'The privacy policy has changed.\n')
+      if (!e.argv.includes('--complete')) return OK('One-time code sent.\n')
+      session.loggedIn = true
+      session.accepted = v
+      return OK('Registered and logged in.\n')
+    }
     if (cmd === 'login') { session.loggedIn = true; return OK('{}') }
     if (cmd === 'logout') { session.loggedIn = false; return OK('{}') }
     if (!session.loggedIn) return result(1, '', 'Not logged in. Run: mokkan login\n')
+    if (cmd === 'accept') {
+      if (flag(e.argv, '--version') !== session.policy) return result(4, '', 'The privacy policy has changed.\n')
+      session.accepted = session.policy
+      return OK('{}')
+    }
+    if (session.accepted !== session.policy) return result(4, '', 'Accept the updated privacy policy: run mokkan accept in a terminal\n')
     if (cmd === 'status') return OK(JSON.stringify({ me: { email: 'vic@example.com' } }))
     if (cmd === 'sync') {
       // The list as fetched; with --deliver, the timed ones it shows as due are delivered on the server.
@@ -836,15 +854,38 @@ test('an edit inside the hidden password resets it with an error instead of corr
   await ui.unmount()
 })
 
-test('registration sends the code, then completes with the code and the masked password', async ($, on) => {
+test('registration shows the privacy summary first; n cancels before any code is sent', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  session.loggedIn = false
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  await ui.press({ key: 'register' })
+  expect(ran.some(a => a[2] === 'privacy')).toBe(true)
+  expect(await shows(ui, summary(POLICY)[0]!)).toBe(true)
+  expect(await shows(ui, summary(POLICY)[1]!)).toBe(true)
+  expect(await shows(ui, 'https://mokkan.dev/privacy')).toBe(true)
+  expect(await ui.find({ key: 'auth' })).toBeUndefined() // no email asked yet
+  expect(await ui.find({ key: 'yes' })).toMatchObject({ text: 'continue', props: { hotkey: 'y' } })
+  expect(await ui.find({ key: 'no' })).toMatchObject({ text: 'cancel', props: { hotkey: 'n' } })
+  await ui.press({ key: 'no' })
+  expect(await ui.find({ key: 'yes' })).toBeUndefined()
+  expect(await shows(ui, summary(POLICY)[0]!)).toBe(false)
+  expect(ran.some(a => a[2] === 'register')).toBe(false)
+  await ui.unmount()
+})
+
+test('registration sends the code, then completes with the code and the masked password, both with the version shown', async ($, on) => {
   const { ran, session, envs, clock } = fakeCli(on)
   session.loggedIn = false
   await opened($, clock)
   const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
 
   await ui.press({ key: 'register' })
+  await ui.press({ key: 'yes' })
+  expect((await ui.find({ key: 'auth' }))?.props.label).toBe('register email')
   await ui.input({ key: 'auth', text: 'new@example.com' })
-  expect(ran.some(a => a[2] === 'register' && a[3] === 'new@example.com' && a[4] === '--start')).toBe(true)
+  expect(ran.find(a => a[2] === 'register')?.slice(2, 7)).toEqual(['register', 'new@example.com', '--start', '--accept-privacy', POLICY])
   expect((await ui.find({ key: 'auth' }))?.props.label).toBe('one-time code')
 
   await ui.input({ key: 'auth', text: '123456' })
@@ -859,11 +900,108 @@ test('registration sends the code, then completes with the code and the masked p
   await ui.input({ key: 'auth', text: 'longenough1', kind: 'change' })
   await ui.input({ key: 'auth', text: '•••••••••••' })
   const at = ran.findIndex(a => a.includes('--complete'))
-  expect(ran[at]?.slice(2, 7)).toEqual(['register', '--complete', 'new@example.com', '--otp', '123456'])
+  expect(ran[at]?.slice(2, 9)).toEqual(['register', '--complete', 'new@example.com', '--otp', '123456', '--accept-privacy', POLICY])
   expect(envs[at]?.MOKKAN_PASSWORD).toBe('longenough1')
   expect(session.loggedIn).toBe(true)
   expect(await ui.find({ key: `row-${B}` })).toBeDefined()
   expect(JSON.stringify(await ui.drawn())).not.toContain('longenough1')
+  await ui.unmount()
+})
+
+test('a policy that changes during registration is shown again, and the code is kept', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  session.loggedIn = false
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  await ui.press({ key: 'register' })
+  await ui.press({ key: 'yes' })
+  await ui.input({ key: 'auth', text: 'new@example.com' })
+  await ui.input({ key: 'auth', text: '123456' })
+  session.policy = '2026-11-01'
+  await ui.input({ key: 'auth', text: 'longenough1', kind: 'change' })
+  await ui.input({ key: 'auth', text: '•••••••••••' })
+  expect(session.loggedIn).toBe(false)
+  expect(await shows(ui, summary('2026-11-01')[0]!)).toBe(true)
+  expect(await ui.find({ key: 'auth' })).toBeUndefined()
+  await ui.press({ key: 'yes' })
+  expect((await ui.find({ key: 'auth' }))?.props.label).toMatch(/new password/) // the code stands
+  await ui.input({ key: 'auth', text: 'longenough1', kind: 'change' })
+  await ui.input({ key: 'auth', text: '•••••••••••' })
+  expect(ran.at(-2)?.slice(2, 9)).toEqual(['register', '--complete', 'new@example.com', '--otp', '123456', '--accept-privacy', '2026-11-01'])
+  expect(session.loggedIn).toBe(true)
+  await ui.unmount()
+})
+
+test('a policy not yet accepted, at sync: the acceptance view replaces the list, and the cached list is kept', async ($, on) => {
+  const cached = { reminders: [row(C, 'cached one', 'due', -5)], done: [], balance: 70, failure: null, fetchedAt: NOW - 3_600_000 }
+  const { ran, session, store, clock } = fakeCli(on, { view: cached })
+  session.accepted = '2026-01-01'
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  expect(ran.some(a => a.slice(2).join(' ') === 'privacy --json')).toBe(true)
+  expect(await ui.find({ key: `row-${C}` })).toBeUndefined()
+  expect(await ui.find({ key: 'tab-todos' })).toBeUndefined()
+  for (const line of summary(POLICY)) expect(await shows(ui, line)).toBe(true)
+  expect(await shows(ui, 'https://mokkan.dev/privacy')).toBe(true)
+  expect(await shows(ui, DELETE_LINE)).toBe(true)
+  expect(await status(ui)).toBeFalsy() // the view says it; no error line
+  const keys = (await ui.findAll({ type: 'Button' })).map(b => [b.key, b.text, b.props.hotkey])
+  expect(keys).toEqual([['accept', 'accept', 'y'], ['close', 'close', 'n']])
+  expect((store.view as { reminders: { id: string }[] }).reminders.map(r => r.id)).toEqual([C]) // unlike a logout
+  await clock.advance(15_000) // the poll goes on: an open pane still counts as a session
+  expect(store.view).toBeDefined()
+
+  await ui.press({ key: 'accept' })
+  expect(ran.find(a => a[2] === 'accept')?.slice(2)).toEqual(['accept', '--yes', '--version', POLICY, '--json'])
+  expect(session.accepted).toBe(POLICY)
+  expect(await ui.find({ key: `row-${B}` })).toBeDefined()
+  expect(await shows(ui, DELETE_LINE)).toBe(false)
+  expect(await status(ui)).toBe('privacy policy accepted')
+  await ui.unmount()
+})
+
+test('a policy not yet accepted, at a command: the acceptance view; a stale accept shows the new summary', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  session.accepted = '2026-01-01'
+  await ui.press({ key: 'push' })
+  await ui.input({ key: 'field', text: 'milk' })
+  expect(await shows(ui, summary(POLICY)[0]!)).toBe(true)
+  expect(await ui.find({ key: 'field' })).toBeUndefined()
+  expect(await status(ui)).toBeFalsy()
+
+  session.policy = '2026-11-01' // published while the view was open
+  await ui.press({ key: 'accept' })
+  expect(session.accepted).toBe('2026-01-01')
+  expect(await shows(ui, summary('2026-11-01')[0]!)).toBe(true)
+  expect(await shows(ui, summary(POLICY)[0]!)).toBe(false)
+  await ui.press({ key: 'accept' })
+  expect(ran.filter(a => a[2] === 'accept').map(a => a[5])).toEqual([POLICY, '2026-11-01'])
+  expect(session.accepted).toBe('2026-11-01')
+  expect(await ui.find({ key: `row-${B}` })).toBeDefined()
+  await ui.unmount()
+})
+
+test('n closes the pane from the acceptance view', async ($, on) => {
+  const { ran, session, clock, panes } = fakeCli(on)
+  session.accepted = '2026-01-01'
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'close' })
+  expect(panes).toEqual([])
+  expect(ran.some(a => a[2] === 'accept')).toBe(false)
+  await ui.unmount()
+})
+
+test('the help view says where the policy is and how to delete the account', async ($, on) => {
+  const { clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await ui.press({ key: 'help' })
+  expect(await shows(ui, 'Privacy policy: mokkan.dev/privacy. To delete your account and everything on it, run mokkan delete-account in a terminal (or npx @vicmpen/mokkan-cli delete-account).')).toBe(true)
   await ui.unmount()
 })
 

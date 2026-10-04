@@ -2,7 +2,7 @@ import type { Credentials } from './credentials.js';
 import { SessionExpiredError } from './errors.js';
 import type {
   AckResponse, BalanceResponse, CheckoutResponse, DeliverResponse, EditPatch, HeartbeatResponse, ListResponse, ListScope, MeResponse,
-  PendingResponse, ReminderResponse, TokenPair,
+  PendingResponse, PrivacyResponse, ReminderResponse, TokenPair,
 } from './types.js';
 
 export class ApiError extends Error {
@@ -12,9 +12,18 @@ export class ApiError extends Error {
   }
 }
 
-/** The extra line the CLI prints after some API errors: the credit reserve note (402) or the retry delay (429). */
+/** Where the full privacy policy lives when the server does not say. */
+export const PRIVACY_URL = 'https://mokkan.dev/privacy';
+
+/**
+ * The extra line the CLI prints after some API errors: the credit reserve note (402), the retry delay (429), or for
+ * the privacy gate (403) and a stale acceptance (409) the policy's address, with the npx form of `mokkan accept`.
+ */
 export function apiErrorHint(err: ApiError): string | null {
-  const body = (err.body ?? {}) as { required?: unknown; cost?: unknown };
+  const body = (err.body ?? {}) as { required?: unknown; cost?: unknown; url?: unknown };
+  const policy = `Privacy policy: ${typeof body.url === 'string' ? body.url : PRIVACY_URL}`;
+  if (err.status === 403 && err.code === 'privacy_not_accepted') return `(or npx @vicmpen/mokkan-cli accept if mokkan isn't installed)\n${policy}`;
+  if (err.status === 409 && err.code === 'privacy_version_stale') return policy;
   if (err.status === 402 && typeof body.required === 'number' && typeof body.cost === 'number' && body.required > body.cost) {
     return `(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)`;
   }
@@ -110,8 +119,12 @@ export class MokkanClient {
     await this.call('POST', '/auth/register/start', { email });
   }
 
-  async registerComplete(email: string, otp: string, password: string): Promise<Credentials> {
-    const pair = await this.call<TokenPair>('POST', '/auth/register/complete', { email, otp, password });
+  /** The policy shown when the server answers 403 privacy_not_accepted, and before registering. */
+  privacy(): Promise<PrivacyResponse> { return this.call('GET', '/privacy'); }
+
+  /** `privacyVersion`: the policy version the user was shown and accepted (409 privacy_version_stale if not current). */
+  async registerComplete(email: string, otp: string, password: string, privacyVersion: string): Promise<Credentials> {
+    const pair = await this.call<TokenPair>('POST', '/auth/register/complete', { email, otp, password, privacy_version: privacyVersion });
     this.onListChanged();
     return this.adopt(pair, email);
   }
@@ -189,6 +202,18 @@ export class MokkanClient {
   }
 
   me(): Promise<MeResponse> { return this.authed('GET', '/me'); }
+
+  /** Accepts exactly `version`; 409 privacy_version_stale when the policy changed since it was shown. */
+  async acceptPrivacy(version: string): Promise<void> {
+    await this.authed('POST', '/privacy/accept', { version });
+  }
+
+  /** Deletes the account and everything on it. A wrong password is 403 wrong_password (a 401 would refresh). */
+  async deleteAccount(password: string): Promise<void> {
+    await this.authed('DELETE', '/me', { password });
+    this.credentials = null;
+    this.onListChanged();
+  }
 
   heartbeat(source: string, sessionId?: string): Promise<HeartbeatResponse> {
     return this.authed('POST', '/heartbeat', sessionId === undefined ? { source } : { source, session_id: sessionId });

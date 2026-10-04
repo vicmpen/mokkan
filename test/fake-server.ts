@@ -20,6 +20,10 @@ export interface FakeAccount {
   /** Account-wide list version, bumped by every push and edit (like the real list_version). */
   version: number;
   checkoutUrl: string;
+  /** DELETE /me answers 403 wrong_password for any other password. */
+  password: string;
+  /** Set by a successful DELETE /me. */
+  deleted: boolean;
   /** Test hook, called after each GET /reminders has been answered (simulate a concurrent change). */
   afterList?: (scope: string) => void;
 }
@@ -27,10 +31,23 @@ export interface FakeAccount {
 export interface FakeResponse { status: number; body?: unknown; headers?: Record<string, string> }
 export type Handler = (req: Recorded) => FakeResponse | Promise<FakeResponse>;
 
+/** The server's current policy and the version the account accepted (null: none). */
+export interface FakePrivacy { version: string; url: string; summary: string[]; accepted: string | null }
+
+/** Authenticated routes the privacy gate lets through, as on the real server. */
+const PRIVACY_EXEMPT = new Set(['POST /privacy/accept', 'DELETE /me', 'POST /auth/logout', 'GET /me', 'POST /heartbeat', 'POST /reminders/ack']);
+
+export const PRIVACY_SUMMARY = [
+  'mokkan stores your email, your reminders and your credit history on a server in Germany.',
+  'Delete your account any time with `mokkan delete-account` in a terminal.',
+];
+
 /** Minimal in-process HTTP server: register handlers per (method, path), inspect recorded requests. */
 export class FakeServer {
   readonly requests: Recorded[] = [];
   url = '';
+  /** Set by withPrivacy: authenticated requests to gated routes get 403 privacy_not_accepted until it is accepted. */
+  privacy: FakePrivacy | null = null;
   private routes: { method: string; path: string; handler: Handler }[] = [];
   private server: Server | undefined;
 
@@ -53,9 +70,15 @@ export class FakeServer {
       this.requests.push(rec);
       const route = this.routes.find((r) => r.method === rec.method && pathMatches(r.path, rec.path));
       if (route) rec.params = pathParams(route.path, rec.path)!;
-      const out = route
-        ? await route.handler(rec)
-        : { status: 404, body: { error: 'not_found', message: `no fake route for ${rec.method} ${rec.path}` } };
+      const p = this.privacy;
+      // The real gate runs in the auth preHandler, before the route does anything.
+      const gated = p !== null && p.accepted !== p.version && rec.headers.authorization !== undefined
+        && !PRIVACY_EXEMPT.has(`${rec.method} ${route?.path ?? rec.path}`);
+      const out = gated
+        ? { status: 403, body: { version: p.version, url: p.url, error: 'privacy_not_accepted', message: 'Accept the updated privacy policy: run mokkan accept in a terminal' } }
+        : route
+          ? await route.handler(rec)
+          : { status: 404, body: { error: 'not_found', message: `no fake route for ${rec.method} ${rec.path}` } };
       res.writeHead(out.status, { 'content-type': 'application/json', ...out.headers });
       res.end(out.body === undefined ? '' : JSON.stringify(out.body));
     });
@@ -72,7 +95,7 @@ export class FakeServer {
   }
 
   /**
-   * Opt-in fake account with prepaid credits: GET /me, GET /reminders (scope-aware, top of stack first),
+   * Opt-in fake account with prepaid credits: GET /me, DELETE /me (403 wrong_password), GET /reminders (scope-aware, top of stack first),
    * POST /reminders (402 when the balance is too low), PATCH /reminders/:id (the contract's rules: 409 stale,
    * 409 not_editable, 404 for done/unknown, 400 for bad text; every 3rd edit costs 1), POST /billing/checkout and
    * GET /billing/balance.
@@ -80,10 +103,11 @@ export class FakeServer {
    * Also POST /heartbeat, GET /reminders/pending, POST /reminders/deliver|pop|dequeue|ack (409 stale on a wrong
    * expected_version, 404 empty).
    */
-  withAccount(init: { balance?: number; email?: string; checkoutUrl?: string } = {}): FakeAccount {
+  withAccount(init: { balance?: number; email?: string; checkoutUrl?: string; password?: string } = {}): FakeAccount {
     const acct: FakeAccount = {
       balance: init.balance ?? 1000, editCount: 0, ledger: [], reminders: new Map(), nextId: 1, version: 1,
       checkoutUrl: init.checkoutUrl ?? 'https://checkout.stripe.com/c/pay/cs_test_fake',
+      password: init.password ?? 'a long password', deleted: false,
     };
     const insufficient = (cost: number, required: number): FakeResponse => ({
       status: 402,
@@ -104,7 +128,17 @@ export class FakeServer {
       r.id !== excludeId && ['scheduled', 'due', 'delivered'].includes(r.state) && r.due_at != null && (r.email_sent_at ?? null) === null).length;
     this.on('GET', '/me', () => ({ status: 200, body: {
       email: init.email ?? 'a@example.com', last_heartbeat_at: null, session_active: false, credit_balance: acct.balance,
+      reminder_count: [...acct.reminders.values()].filter((r) => r.state !== 'done').length,
+      privacy_version: this.privacy?.accepted ?? '2026-10-04',
     } }));
+    this.on('DELETE', '/me', (req) => {
+      if ((req.body as { password?: string } | null)?.password !== acct.password) {
+        return { status: 403, body: { error: 'wrong_password', message: 'Wrong password' } };
+      }
+      acct.deleted = true;
+      acct.reminders.clear();
+      return { status: 204 };
+    });
     this.on('GET', '/reminders', (req) => {
       // Same filters as the real listReminders: active = due/delivered/acknowledged, all = not done, done = done.
       const scope = req.query.get('scope') ?? 'active';
@@ -223,6 +257,26 @@ export class FakeServer {
       return { status: 200, body: { version: acct.version, acknowledged } };
     });
     return acct;
+  }
+
+  /**
+   * Opt-in privacy policy: GET /privacy, POST /privacy/accept (204, or 409 privacy_version_stale for another
+   * version) and the gate (see `privacy`). `accepted` defaults to null: the account has not accepted the current one.
+   */
+  withPrivacy(init: Partial<FakePrivacy> = {}): FakePrivacy {
+    const p: FakePrivacy = {
+      version: '2026-10-04', url: 'https://mokkan.dev/privacy', summary: PRIVACY_SUMMARY, accepted: null, ...init,
+    };
+    this.privacy = p;
+    this.on('GET', '/privacy', () => ({ status: 200, body: { version: p.version, url: p.url, summary: p.summary } }));
+    this.on('POST', '/privacy/accept', (req) => {
+      if ((req.body as { version?: string } | null)?.version !== p.version) {
+        return { status: 409, body: { version: p.version, url: p.url, error: 'privacy_version_stale', message: 'The privacy policy has changed; read it again' } };
+      }
+      p.accepted = p.version;
+      return { status: 204 };
+    });
+    return p;
   }
 
   count(method: string, path: string): number {

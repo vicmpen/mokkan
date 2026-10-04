@@ -1,5 +1,6 @@
 import {
-  chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync,
+  chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -91,6 +92,16 @@ export function saveCredentials(creds: Credentials, env: NodeJS.ProcessEnv = pro
 export function clearCredentials(env: NodeJS.ProcessEnv = process.env): void {
   const file = credentialsPath(env);
   if (existsSync(file)) unlinkSync(file);
+}
+
+/** After the account is deleted: credentials.json, and hook.log with its rotated copies and `.notified` markers. */
+export function removeAccountFiles(env: NodeJS.ProcessEnv = process.env): void {
+  clearCredentials(env);
+  const dir = configDir(env);
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (name.startsWith('hook.log')) rmSync(path.join(dir, name), { force: true });
+  }
 }
 
 /** Precedence: MOKKAN_SERVER_URL env, then the saved credentials, then the default. Trailing slashes are stripped. */

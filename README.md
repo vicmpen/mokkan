@@ -119,13 +119,14 @@ The npm package contains the same files under `$(npm root -g)/mokkan/codex`. Cod
 ## Account
 
 ```
-mokkan register you@example.com     # emails you a code, then asks for a password (10+ characters)
+mokkan register you@example.com     # shows the privacy policy summary, emails you a code, then asks for a password (10+ characters)
 mokkan login you@example.com
 mokkan logout
 mokkan status                       # who you are, server, balance
+mokkan delete-account               # deletes the account and everything on it (see Privacy)
 ```
 
-Registration and login ask for a password without showing it, so run them in a terminal. When you try them from Claude Code, the command only prints the terminal command you need.
+Registration and login ask for a password without showing it, so run them in a terminal. When you try them from Claude Code, the command only prints the terminal command you need. Registering shows a summary of the [privacy policy](https://mokkan.dev/privacy) first and goes on only when you answer `y`; the pane shows the same summary before it asks for your email.
 
 ## Commands
 
@@ -141,9 +142,14 @@ mokkan pending | done                  due and not yet shown | finished reminder
 mokkan balance | buy                   credits
 mokkan feedback <text>                 send feedback to the mokkan developer (free)
 mokkan ui                              full-screen view with keyboard actions (see below)
+mokkan privacy [--json]                the privacy policy's version, link and summary (no login needed)
+mokkan accept                          accept the current privacy policy (see Privacy)
+mokkan delete-account                  delete your account, in a terminal (see Privacy)
 ```
 
 Add `--json` for machine-readable output. `mokkan help` lists everything.
+
+Exit codes: 0 success, 1 a mistake in the command or not logged in, 2 the server is unreachable or failing (or rate limiting), 3 not enough credits (run `mokkan buy`), 4 the privacy policy must be accepted first (run `mokkan accept` in a terminal).
 
 Acknowledging and finishing are different acts. `mokkan ack` says "seen": it stops the email for a due reminder and releases its reserved credit, but the reminder stays on the list. `mokkan done <id>` finishes a reminder anywhere on the list, exactly as `pop` finishes the top one; it moves to the history that `mokkan done` shows. `mokkan undone <id>` puts a finished reminder back where it was. A reopened reminder that had a due time comes back acknowledged, so it is never emailed again. Both are free.
 
@@ -167,6 +173,8 @@ Acknowledging and finishing are different acts. `mokkan ack` says "seen": it sto
 | `s` | sync now |
 | `b` | buy credits (opens Stripe Checkout in your browser; if that fails, run `mokkan buy --no-open` for the link) |
 | `q`, `Ctrl-C` | quit |
+
+When the privacy policy has changed, `mokkan ui` shows its summary and link in place of the list: `y` accepts it and goes back to the list, `n` quits, and `d` leaves the full screen and runs `mokkan delete-account`.
 
 Due ones on the tab you are looking at count as shown: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
@@ -195,10 +203,18 @@ If you set up the status line that 0.2.0 offered, remove it first, because it ru
 
 ## Privacy
 
+The privacy policy is at [mokkan.dev/privacy](https://mokkan.dev/privacy). In short:
+
 - Your email address, your reminders and your credit transactions are stored on the mokkan server (`api.mokkan.dev`). This lets them sync between sessions and lets scheduled reminders be emailed to you.
 - Payments go through Stripe Checkout. mokkan never sees your card details.
 - On your machine, mokkan keeps your login tokens in `~/.config/mokkan/credentials.json` (mode 0600). Hook errors are logged to `hook.log` in the same directory.
 - `MOKKAN_SERVER_URL` points the CLI at a different server.
+
+Every account accepts the current policy: when you register, and again whenever a new version is published. Until you accept a new version, commands stop with exit code 4 and say how to accept; reminders you already have are still emailed when they come due, and `mokkan ack` keeps working.
+
+- `mokkan privacy` prints the policy's version, link and summary (`--json` for the pane); it needs no login.
+- `mokkan accept` shows the summary and asks. In a terminal, any command that meets the new policy asks the same way: `y` accepts and runs the command, `n` quits, `d` deletes your account instead. Without a terminal it needs `--yes`, and `--version <v>` accepts only that version. Only you accept it: Claude (`/mokkan`) and Codex are told never to run `accept` and to send you to a terminal (`mokkan accept`, or `npx @vicmpen/mokkan-cli accept` if mokkan isn't installed).
+- `mokkan delete-account`, in a terminal, deletes your account and everything on it: your reminders, history, sessions and credits. It says what goes (`This deletes you@example.com, its 12 reminders and 42 unspent credits.`), then asks for your password and for the word `delete`. Unspent credits are lost. Payment records are kept without any link to you, for accounting. It works whether or not you have accepted the current policy, and it removes `credentials.json` and `hook.log` from `~/.config/mokkan/`. It does not run from the pane, Claude or Codex.
 
 ## Why "mokkan"
 

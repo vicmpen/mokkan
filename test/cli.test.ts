@@ -51,6 +51,11 @@ describe('parseArgs', () => {
       command: 'push', args: ['meet', 'bob', '--at', '5pm', 'sharp'], flags: {},
     });
     expect(parseArgs(['constructor', '--text', 'x']).args).toEqual(['--text', 'x']);
+    expect(parseArgs(['accept', '--yes', '--version', '2026-10-04'])).toEqual({ command: 'accept', args: [], flags: { yes: true, version: '2026-10-04' } });
+    expect(parseArgs(['register', 'a@b.c', '--start', '--accept-privacy', '2026-10-04'])).toEqual({
+      command: 'register', args: ['a@b.c'], flags: { start: true, 'accept-privacy': '2026-10-04' },
+    });
+    expect(parseArgs(['push', 'say', '--yes', '--version', '2']).args).toEqual(['say', '--yes', '--version', '2']);
     expect(parseArgs(['edit', '1', '--pack', 'p', '--no-open']).args).toEqual(['1', '--pack', 'p', '--no-open']);
     expect(parseArgs(['--argline', 'edit 2 --in 2h call mom at 5', '--exit-zero'])).toEqual({
       command: 'edit', args: ['2', 'call', 'mom', 'at', '5'], flags: { in: '2h', 'exit-zero': true },
@@ -349,7 +354,7 @@ describe('mokkan CLI', () => {
 
   it('register (non-TTY) starts the OTP flow and tells the user how to finish', async () => {
     server.on('POST', '/auth/register/start', () => ({ status: 202, body: { ok: true } }));
-    const res = await h.run(['register', 'new@example.com'], { serverUrl: server.url });
+    const res = await h.run(['register', 'new@example.com', '--accept-privacy', '2026-10-04'], { serverUrl: server.url });
     expect(res.code).toBe(0);
     expect(server.last('POST', '/auth/register/start')?.body).toEqual({ email: 'new@example.com' });
     expect(res.stdout).toContain('One-time code sent to new@example.com');
@@ -359,9 +364,9 @@ describe('mokkan CLI', () => {
 
   it('register --complete with --otp and MOKKAN_PASSWORD saves credentials with mode 600', async () => {
     server.on('POST', '/auth/register/complete', () => ({ status: 201, body: tokenPair('reg') }));
-    const res = await h.run(['register', '--complete', 'new@example.com', '--otp', '123456'], { serverUrl: server.url, env: { MOKKAN_PASSWORD: 'a long password' } });
+    const res = await h.run(['register', '--complete', 'new@example.com', '--otp', '123456', '--accept-privacy', '2026-10-04'], { serverUrl: server.url, env: { MOKKAN_PASSWORD: 'a long password' } });
     expect(res.code).toBe(0);
-    expect(server.last('POST', '/auth/register/complete')?.body).toEqual({ email: 'new@example.com', otp: '123456', password: 'a long password' });
+    expect(server.last('POST', '/auth/register/complete')?.body).toEqual({ email: 'new@example.com', otp: '123456', password: 'a long password', privacy_version: '2026-10-04' });
     expect(res.stdout).toBe(`Registered and logged in as new@example.com (${server.url}).\n`);
     const file = credentialsPath(h.env());
     expect(statSync(file).mode & 0o777).toBe(0o600);
@@ -369,15 +374,16 @@ describe('mokkan CLI', () => {
   });
 
   it('register (TTY) prompts for code and hidden password after sending the OTP', async () => {
+    server.withPrivacy();
     server.on('POST', '/auth/register/start', () => ({ status: 202, body: { ok: true } }));
     server.on('POST', '/auth/register/complete', () => ({ status: 201, body: tokenPair('tty') }));
-    const res = await h.run(['register', 'new@example.com'], { serverUrl: server.url, isTTY: true, answers: ['654321', 'another long pw'] });
+    const res = await h.run(['register', 'new@example.com'], { serverUrl: server.url, isTTY: true, answers: ['y', '654321', 'another long pw'] });
     expect(res.code).toBe(0);
-    expect(server.last('POST', '/auth/register/complete')?.body).toEqual({ email: 'new@example.com', otp: '654321', password: 'another long pw' });
+    expect(server.last('POST', '/auth/register/complete')?.body).toEqual({ email: 'new@example.com', otp: '654321', password: 'another long pw', privacy_version: '2026-10-04' });
   });
 
   it('register rejects a short password before calling the server', async () => {
-    const res = await h.run(['register', '--complete', 'new@example.com', '--otp', '123456'], { serverUrl: server.url, env: { MOKKAN_PASSWORD: 'short' } });
+    const res = await h.run(['register', '--complete', 'new@example.com', '--otp', '123456', '--accept-privacy', '2026-10-04'], { serverUrl: server.url, env: { MOKKAN_PASSWORD: 'short' } });
     expect(res.code).toBe(1);
     expect(res.stderr).toContain('at least 10 characters');
     expect(server.count('POST', '/auth/register/complete')).toBe(0);

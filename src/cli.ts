@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { ApiError, NetworkError, MokkanClient, apiErrorHint } from './client.js';
+import { ApiError, NetworkError, MokkanClient, PRIVACY_URL, apiErrorHint } from './client.js';
 import {
   clearCredentials, CredentialsCorruptError, CredentialsLockError, CredentialsPermissionError, loadCredentials, resolveServerUrl,
   saveCredentials, withCredentialsLock, type Credentials,
@@ -19,6 +19,10 @@ import { uiCommand } from './commands/ui.js';
 import { HOOK_BUDGET_MS, hookCommand, safeAppendHookLog } from './hooks.js';
 import { watchCommand } from './watcher.js';
 import { statuslineCommand } from './statusline-remove.js';
+import { acceptCommand, askToAccept, deleteAccountCommand, privacyCommand } from './commands/privacy.js';
+import { EXIT_PRIVACY_REQUIRED, isPrivacyRequired, isPrivacyStale } from './privacy.js';
+
+export { EXIT_PRIVACY_REQUIRED };
 
 /** The interactive terminal `mokkan ui` drives. Absent when stdin or stdout is not a TTY. */
 export interface TerminalIO {
@@ -73,6 +77,8 @@ const COMMAND_FLAGS = new Map<string, { boolean: string[]; value: string[] }>([
   ['edit', { boolean: ['clear-due'], value: ['text', 'in', 'at'] }],
   ['buy', { boolean: ['no-open'], value: ['pack'] }],
   ['sync', { boolean: ['deliver'], value: [] }],
+  ['accept', { boolean: ['yes'], value: ['version'] }],
+  ['register', { boolean: [], value: ['accept-privacy'] }],
 ]);
 
 /**
@@ -150,9 +156,14 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
                                   buy credits: prints (and opens) a Stripe Checkout link
   mokkan balance [--json]         credit balance and recent transactions
   mokkan feedback <text>          send feedback to the mokkan developer (free)
-  mokkan register [email]         create an account (--start | --complete --otp <code>)
+  mokkan register [email]         create an account (--start | --complete --otp <code>); shows the privacy
+                                  policy first (without a terminal: --accept-privacy <version>)
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
+  mokkan privacy [--json]         the privacy policy: version, link and summary
+  mokkan accept [--yes [--version <v>]]
+                                  accept the current privacy policy (asks in a terminal; --yes accepts without asking)
+  mokkan delete-account           delete your account and everything on it (in a terminal; asks first)
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
   mokkan sync [--source X] [--deliver]
@@ -164,6 +175,8 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
 
   --exit-zero                     report errors on stdout and always exit 0 (for the /mokkan slash command)
   --argline "<words>"             first argument only: split the string on whitespace and use it as the arguments
+
+Privacy policy: ${PRIVACY_URL}. To delete your account and everything on it, run mokkan delete-account in a terminal.
 `;
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -209,7 +222,10 @@ export function defaultIO(): CliIO {
   };
 }
 
-/** Exit code when the server answers 402 insufficient_credits (1 = user error, 2 = server/network/rate limit). */
+/**
+ * Exit code when the server answers 402 insufficient_credits (1 = user error, 2 = server/network/rate limit,
+ * 4 = EXIT_PRIVACY_REQUIRED: the privacy policy must be accepted in a terminal).
+ */
 export const EXIT_INSUFFICIENT_CREDITS = 3;
 
 function reportError(err: unknown, io: CliIO): number {
@@ -222,6 +238,7 @@ function reportError(err: unknown, io: CliIO): number {
     const hint = apiErrorHint(err);
     if (hint) io.stderr(`${hint}\n`);
     if (err.status === 402 && err.code === 'insufficient_credits') return EXIT_INSUFFICIENT_CREDITS;
+    if (isPrivacyRequired(err) || isPrivacyStale(err)) return EXIT_PRIVACY_REQUIRED;
     // A 429 is transient like a 5xx: the pane shows 'offline' for exit 2 but treats exit 1 as logged out.
     return err.status >= 500 || err.status === 429 ? 2 : 1;
   }
@@ -303,42 +320,59 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
     }
     const client = makeClient(creds, io, 5000);
     const ctx: Ctx = { io, client, json: flags.json === true, flags, now: io.now };
-    switch (command) {
-      case undefined:
-      case 'list': return await listCommand(ctx);
-      case 'done': return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
-      case 'undone': return await markDoneCommand(ctx, args, false);
-      case 'pending': return await pendingCommand(ctx);
-      case 'ui': {
-        const stop = new AbortController();
-        try {
-          return await uiCommand({ ...ctx, client: makeClient(creds, io, 5000, stop.signal) });
-        } finally {
-          stop.abort();
-        }
-      }
-      case 'push': return await pushCommand(ctx, args);
-      case 'pop': return await takeCommand(ctx, 'pop');
-      case 'dequeue': return await takeCommand(ctx, 'dequeue');
-      case 'in': return await inCommand(ctx, args);
-      case 'ack': return await ackCommand(ctx, args);
-      case 'deliver': return await deliverCommand(ctx, args);
-      case 'edit': return await editCommand(ctx, args);
-      case 'register': return await registerCommand(ctx, args);
-      case 'login': return await loginCommand(ctx, args);
-      case 'logout': return await logoutCommand(ctx);
-      case 'status': return await statusCommand(ctx);
-      case 'buy': return await buyCommand(ctx);
-      case 'balance': return await balanceCommand(ctx);
-      case 'heartbeat': return await heartbeatCommand(ctx);
-      case 'sync': return await syncCommand(ctx);
-      case 'feedback': return await feedbackCommand(ctx, args);
-      case 'watch': return await watchCommand(ctx);
-      default:
-        throw new UserError(`Unknown command "${command}".\n${USAGE}`);
+    try {
+      return await dispatch(command, args, ctx, creds);
+    } catch (err) {
+      // The privacy gate: with a terminal, ask and run the command once more (the gate answers before the server
+      // changes anything). `watch` and `--json` (stdout is for the JSON) stop instead; so does anything without a
+      // terminal: reportError prints the message, exit 4.
+      if (!isPrivacyRequired(err) || !io.isTTY || ctx.json || command === 'watch') throw err;
+      const code = await askToAccept(ctx);
+      return code ?? await dispatch(command, args, ctx, creds);
     }
   } catch (err) {
     return reportError(err, io);
+  }
+}
+
+async function dispatch(command: string | undefined, args: string[], ctx: Ctx, creds: Credentials | null): Promise<number> {
+  const { io } = ctx;
+  switch (command) {
+    case undefined:
+    case 'list': return await listCommand(ctx);
+    case 'done': return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
+    case 'undone': return await markDoneCommand(ctx, args, false);
+    case 'pending': return await pendingCommand(ctx);
+    case 'ui': {
+      const stop = new AbortController();
+      try {
+        return await uiCommand({ ...ctx, client: makeClient(creds, io, 5000, stop.signal) });
+      } finally {
+        stop.abort();
+      }
+    }
+    case 'push': return await pushCommand(ctx, args);
+    case 'pop': return await takeCommand(ctx, 'pop');
+    case 'dequeue': return await takeCommand(ctx, 'dequeue');
+    case 'in': return await inCommand(ctx, args);
+    case 'ack': return await ackCommand(ctx, args);
+    case 'deliver': return await deliverCommand(ctx, args);
+    case 'edit': return await editCommand(ctx, args);
+    case 'register': return await registerCommand(ctx, args);
+    case 'login': return await loginCommand(ctx, args);
+    case 'logout': return await logoutCommand(ctx);
+    case 'status': return await statusCommand(ctx);
+    case 'buy': return await buyCommand(ctx);
+    case 'balance': return await balanceCommand(ctx);
+    case 'heartbeat': return await heartbeatCommand(ctx);
+    case 'sync': return await syncCommand(ctx);
+    case 'feedback': return await feedbackCommand(ctx, args);
+    case 'watch': return await watchCommand(ctx);
+    case 'privacy': return await privacyCommand(ctx);
+    case 'accept': return await acceptCommand(ctx);
+    case 'delete-account': return await deleteAccountCommand(ctx);
+    default:
+      throw new UserError(`Unknown command "${command}".\n${USAGE}`);
   }
 }
 

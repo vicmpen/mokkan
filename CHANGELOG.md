@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Privacy policy.** Every account accepts the policy at [mokkan.dev/privacy](https://mokkan.dev/privacy). `mokkan register` shows its summary before it sends the code and goes on only on `y`; without a terminal, `register --start` and `--complete` need `--accept-privacy <version>` (the pane passes the version it showed). When a new version is published, a command run in a terminal shows the summary and asks `y accept · n quit · d delete my account`, then runs once more; without a terminal it prints how to accept and exits 4, a new exit code (from `sync` too). `mokkan watch` stops with exit 4, the hooks log it at most hourly, and `mokkan ui` shows the summary in place of the list (`y` accept, `n` quit, `d` delete). Needs a server with `GET /privacy` and `POST /privacy/accept`.
+- **`mokkan privacy [--json]`** prints the policy's version, link and summary, without a login. **`mokkan accept`** asks on demand; without a terminal it needs `--yes`, and `--version <v>` accepts only that version.
+- **`mokkan delete-account`** deletes the account and everything on it, in a terminal only. It says what goes (reminders, unspent credits; payment records are kept without your name), asks for the password and for the word `delete`, then removes `credentials.json` and `hook.log` from `~/.config/mokkan/`. It works whether or not the current policy is accepted. Needs server `DELETE /me`.
+- The `/mokkan` skill, `/mokkan-cli` and the Codex skill never run `accept` or `delete-account`; they send the user to a terminal. `mokkan help` names the policy and `delete-account`.
+
 ## 0.6.3
 
 - **The pane syncs in one process.** `mokkan sync [--source X] [--deliver]` fetches the list, the history and the balance, sends a heartbeat and (with `--deliver`) delivers the due timed reminders over one connection. The pane makes this one call per refresh, where it used to start four or five processes.

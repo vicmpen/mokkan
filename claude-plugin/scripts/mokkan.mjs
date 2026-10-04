@@ -34,8 +34,13 @@ var ApiError = class extends Error {
   body;
   retryAfterSeconds;
 };
+var PRIVACY_URL = "https://mokkan.dev/privacy";
 function apiErrorHint(err) {
   const body = err.body ?? {};
+  const policy = `Privacy policy: ${typeof body.url === "string" ? body.url : PRIVACY_URL}`;
+  if (err.status === 403 && err.code === "privacy_not_accepted") return `(or npx @vicmpen/mokkan-cli accept if mokkan isn't installed)
+${policy}`;
+  if (err.status === 409 && err.code === "privacy_version_stale") return policy;
   if (err.status === 402 && typeof body.required === "number" && typeof body.cost === "number" && body.required > body.cost) {
     return `(${body.required - body.cost} credits are kept for pending reminder emails; acknowledge shown reminders with \`mokkan ack\` or run \`mokkan buy\`)`;
   }
@@ -99,8 +104,13 @@ var MokkanClient = class {
   async registerStart(email) {
     await this.call("POST", "/auth/register/start", { email });
   }
-  async registerComplete(email, otp, password) {
-    const pair = await this.call("POST", "/auth/register/complete", { email, otp, password });
+  /** The policy shown when the server answers 403 privacy_not_accepted, and before registering. */
+  privacy() {
+    return this.call("GET", "/privacy");
+  }
+  /** `privacyVersion`: the policy version the user was shown and accepted (409 privacy_version_stale if not current). */
+  async registerComplete(email, otp, password, privacyVersion) {
+    const pair = await this.call("POST", "/auth/register/complete", { email, otp, password, privacy_version: privacyVersion });
     this.onListChanged();
     return this.adopt(pair, email);
   }
@@ -174,6 +184,16 @@ var MokkanClient = class {
   }
   me() {
     return this.authed("GET", "/me");
+  }
+  /** Accepts exactly `version`; 409 privacy_version_stale when the policy changed since it was shown. */
+  async acceptPrivacy(version) {
+    await this.authed("POST", "/privacy/accept", { version });
+  }
+  /** Deletes the account and everything on it. A wrong password is 403 wrong_password (a 401 would refresh). */
+  async deleteAccount(password) {
+    await this.authed("DELETE", "/me", { password });
+    this.credentials = null;
+    this.onListChanged();
   }
   heartbeat(source, sessionId) {
     return this.authed("POST", "/heartbeat", sessionId === void 0 ? { source } : { source, session_id: sessionId });
@@ -316,8 +336,10 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -390,6 +412,14 @@ function saveCredentials(creds, env = process.env) {
 function clearCredentials(env = process.env) {
   const file = credentialsPath(env);
   if (existsSync(file)) unlinkSync(file);
+}
+function removeAccountFiles(env = process.env) {
+  clearCredentials(env);
+  const dir = configDir(env);
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (name.startsWith("hook.log")) rmSync(path.join(dir, name), { force: true });
+  }
 }
 function resolveServerUrl(creds, env = process.env) {
   const fromEnv = env.MOKKAN_SERVER_URL;
@@ -478,6 +508,15 @@ async function readAllStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+// src/privacy.ts
+var EXIT_PRIVACY_REQUIRED = 4;
+var isPrivacyRequired = (err) => err instanceof ApiError && err.status === 403 && err.code === "privacy_not_accepted";
+var isPrivacyStale = (err) => err instanceof ApiError && err.status === 409 && err.code === "privacy_version_stale";
+var terminalCommand = (args) => `mokkan ${args} (or npx @vicmpen/mokkan-cli ${args} if mokkan isn't installed)`;
+function formatPolicy(p) {
+  return [`mokkan privacy policy, version ${p.version}:`, ...p.summary.map((l) => `  ${l}`), `Full text: ${p.url}`, ""].join("\n");
+}
+
 // src/commands/auth.ts
 var EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
 var MIN_PASSWORD_LENGTH = 10;
@@ -498,9 +537,21 @@ async function requireOtp(ctx, email) {
   if (!ctx.io.isTTY) throw new UserError(`Provide the code: mokkan register --complete ${email} --otp <code>`);
   return ctx.io.prompt("One-time code: ", false);
 }
+async function agreeToPolicy(ctx) {
+  const p = await ctx.client.privacy();
+  ctx.io.stdout(formatPolicy(p));
+  const answer = (await ctx.io.prompt("Accept and continue? y yes \xB7 n cancel ", false)).trim().toLowerCase();
+  if (answer !== "y") throw new UserError("Registration cancelled.");
+  return p.version;
+}
 async function registerCommand(ctx, args) {
   const { io, client, flags } = ctx;
   const email = await requireEmail(ctx, args[0], "mokkan register you@example.com");
+  const given = flags["accept-privacy"];
+  if ((typeof given !== "string" || given === "") && !io.isTTY) {
+    throw new UserError("Register in a terminal, or pass --accept-privacy <version> after showing the policy");
+  }
+  let version = typeof given === "string" && given !== "" ? given : await agreeToPolicy(ctx);
   if (flags.complete !== true) {
     await client.registerStart(email);
     io.stdout(`One-time code sent to ${email}. (Dev server: read it from GET /dev/outbox?to=${email} or server/outbox.jsonl.)
@@ -515,7 +566,17 @@ async function registerCommand(ctx, args) {
   const otp = await requireOtp(ctx, email);
   const password = await requirePassword(ctx, `New password (min ${MIN_PASSWORD_LENGTH} chars): `);
   if (password.length < MIN_PASSWORD_LENGTH) throw new UserError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
-  const creds = await client.registerComplete(email, otp, password);
+  let creds;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      creds = await client.registerComplete(email, otp, password, version);
+      break;
+    } catch (err) {
+      if (!isPrivacyStale(err) || !io.isTTY || attempt > 0) throw err;
+      io.stdout("The privacy policy has just changed. The new version:\n");
+      version = await agreeToPolicy(ctx);
+    }
+  }
   io.stdout(`Registered and logged in as ${creds.email} (${client.baseUrl}).
 `);
   return 0;
@@ -1019,6 +1080,7 @@ function initialState(email, host) {
   return {
     screen: email === null ? "login" : "dashboard",
     login: emptyLogin(),
+    privacy: null,
     tab: "todos",
     reminders: [],
     done: null,
@@ -1218,6 +1280,8 @@ function render(state, size, now) {
     lines = [fit("mokkan ui: terminal too small", columns - 1)];
   } else if (state.screen === "login") {
     lines = loginLines(state, drawable(size));
+  } else if (state.screen === "privacy") {
+    lines = privacyLines(state, drawable(size));
   } else {
     lines = dashboardLines(state, drawable(size), now);
   }
@@ -1392,6 +1456,26 @@ function loginLines(state, size) {
     line([part(" No account? Quit and run: mokkan register you@example.com", "dim")], [], columns)
   ];
 }
+function privacyLines(state, size) {
+  const { columns, rows } = size;
+  const p = state.privacy;
+  const text = (t, ...styles) => line([part(` ${t}`, ...styles)], [], columns);
+  const out = [
+    line([part(" mokkan", "bold"), part(` \xB7 ${clean(state.email)} \xB7 ${state.host}`)], [part("privacy policy", "dim")], columns),
+    "",
+    text(`The privacy policy${p.version === null ? "" : ` (version ${clean(p.version)})`} needs your acceptance.`, "bold"),
+    ""
+  ];
+  if (p.summary === null) out.push(text("Loading the summary\u2026", "dim"));
+  for (const l of p.summary ?? []) out.push(...wrap(clean(l), columns - 1, columns - 1).map((t) => text(t)));
+  out.push("", text(`Full text: ${clean(p.url)}`));
+  out.splice(rows - 2);
+  while (out.length < rows - 2) out.push("");
+  const m = state.message;
+  out.push(m ? text(`${m.tone === "red" ? "error: " : ""}${clean(m.text)}`, m.tone) : "");
+  out.push(text("y accept \xB7 n quit \xB7 d delete", "yellow"));
+  return out;
+}
 
 // src/tui/app.ts
 var REFRESH_INTERVAL_MS = 1e4;
@@ -1455,6 +1539,8 @@ var TuiApp = class {
   state;
   /** Set when the app wants to quit; the driver resolves with it. */
   exitCode = null;
+  /** Set with `d` in the acceptance view: `mokkan ui` leaves the full screen and runs the delete-account flow. */
+  deleteRequested = false;
   /** Called after every state change; the driver redraws. */
   onChange = () => void 0;
   size = { columns: 80, rows: 24 };
@@ -1493,6 +1579,7 @@ var TuiApp = class {
   handleKey(key) {
     const s = this.state;
     if (s.screen === "login") return this.loginKey(key);
+    if (s.screen === "privacy") return this.privacyKey(key);
     if (s.mode.kind === "input") return this.inputKey(s.mode, key);
     if (key.name === "paste") return Promise.resolve();
     if (s.mode.kind === "confirm") return this.confirmKey(s.mode, key);
@@ -1552,6 +1639,64 @@ var TuiApp = class {
       this.changed();
     }
     return Promise.resolve();
+  }
+  /** The acceptance view: y accepts the version shown, n quits (exit 4), d quits into the delete-account flow. */
+  privacyKey(key) {
+    const ch = key.name === "char" ? key.ch : "";
+    if (ch === "n" || ch === "q" || key.name === "escape" || key.name === "ctrl-c") {
+      this.exitCode = EXIT_PRIVACY_REQUIRED;
+      this.changed();
+      return Promise.resolve();
+    }
+    if (ch === "d") {
+      this.deleteRequested = true;
+      return this.quit();
+    }
+    if (ch === "y") return this.enqueue(() => this.acceptShown());
+    return Promise.resolve();
+  }
+  /** Accepts exactly the version on screen; when it changed meanwhile (409), the new one is shown instead. */
+  async acceptShown() {
+    const s = this.state;
+    const p = s.privacy;
+    if (s.screen !== "privacy" || p === null) return;
+    if (p.summary === null || p.version === null) {
+      await this.loadPolicy();
+      return;
+    }
+    try {
+      await this.client.acceptPrivacy(p.version);
+    } catch (err) {
+      if (!isPrivacyStale(err)) throw err;
+      await this.loadPolicy();
+      this.say("The privacy policy has just changed: this is the new version.", "yellow");
+      return;
+    }
+    s.screen = "dashboard";
+    s.privacy = null;
+    this.say("Privacy policy accepted.", "green");
+    await this.doRefresh();
+  }
+  /** Shows the acceptance view for a 403 privacy_not_accepted, then fetches the summary into it. */
+  async toPrivacy(err) {
+    const s = this.state;
+    const body = err.body ?? {};
+    s.screen = "privacy";
+    s.mode = { kind: "normal" };
+    s.message = null;
+    s.privacy = { version: typeof body.version === "string" ? body.version : null, url: typeof body.url === "string" ? body.url : PRIVACY_URL, summary: null };
+    this.changed();
+    await this.loadPolicy();
+  }
+  /** GET /privacy into the acceptance view; a failure is shown on its message line (y tries again). */
+  async loadPolicy() {
+    try {
+      const p = await this.client.privacy();
+      this.state.privacy = { version: p.version, url: p.url, summary: p.summary };
+      this.changed();
+    } catch (err) {
+      this.say(`${errorText(err)} (y tries again)`, "red");
+    }
   }
   switchField(field) {
     const l = this.state.login;
@@ -1920,6 +2065,10 @@ var TuiApp = class {
         this.toLogin("Session expired, log in again.");
         return;
       }
+      if (isPrivacyRequired(err)) {
+        await this.toPrivacy(err);
+        return;
+      }
       s.error = err instanceof NetworkError ? { kind: "offline", message: err.message } : { kind: "error", message: errorText(err) };
     } finally {
       s.refreshing = false;
@@ -1950,6 +2099,7 @@ var TuiApp = class {
   toLogin(message) {
     const s = this.state;
     s.screen = "login";
+    s.privacy = null;
     s.login = emptyLogin();
     s.login.error = { text: message, tone: "red" };
     s.reminders = [];
@@ -1971,6 +2121,10 @@ var TuiApp = class {
   async fail(err) {
     if (this.sessionLost(err)) {
       this.toLogin("Session expired, log in again.");
+      return;
+    }
+    if (isPrivacyRequired(err)) {
+      await this.toPrivacy(err);
       return;
     }
     if (err instanceof NetworkError) {
@@ -2180,7 +2334,7 @@ async function runTerminal(app, io, tty) {
     app.state.message = { text: errorText(err), tone: "red" };
     scheduleDraw();
   };
-  const dispatch = (keys) => {
+  const dispatch2 = (keys) => {
     for (const key of keys) {
       if (app.exitCode !== null) return;
       void app.handleKey(key).catch(report);
@@ -2189,7 +2343,7 @@ async function runTerminal(app, io, tty) {
   const decoder = new KeyDecoder();
   const flush = () => {
     flushTimer = null;
-    dispatch(decoder.flush());
+    dispatch2(decoder.flush());
   };
   app.onChange = () => {
     scheduleDraw();
@@ -2202,7 +2356,7 @@ async function runTerminal(app, io, tty) {
     io.stdout(ENTER_SCREEN);
     tty.setRawMode(true);
     unData = tty.onData((chunk) => {
-      dispatch(decoder.feed(chunk));
+      dispatch2(decoder.feed(chunk));
       if (flushTimer !== null) clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, ESC_FLUSH_MS);
     });
@@ -2239,6 +2393,83 @@ async function runTerminal(app, io, tty) {
   return app.exitCode ?? 0;
 }
 
+// src/commands/privacy.ts
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+async function privacyCommand(ctx) {
+  const p = await ctx.client.privacy();
+  ctx.io.stdout(ctx.json ? `${JSON.stringify({ version: p.version, url: p.url, summary: p.summary })}
+` : formatPolicy(p));
+  return 0;
+}
+async function askToAccept(ctx) {
+  const { io, client } = ctx;
+  for (let shown = 1; ; shown++) {
+    const p = await client.privacy();
+    io.stdout(formatPolicy(p));
+    const answer = (await io.prompt("Accept? y accept \xB7 n quit \xB7 d delete my account ", false)).trim().toLowerCase();
+    if (answer === "d") return deleteAccountCommand(ctx);
+    if (answer !== "y") {
+      io.stderr("Not accepted. Run mokkan accept when you are ready.\n");
+      return EXIT_PRIVACY_REQUIRED;
+    }
+    try {
+      await client.acceptPrivacy(p.version);
+    } catch (err) {
+      if (!isPrivacyStale(err)) throw err;
+      if (shown === 2) {
+        io.stderr("The privacy policy changed again while it was shown; try again later.\n");
+        return 2;
+      }
+      io.stdout("The privacy policy has just changed. The new version:\n");
+      continue;
+    }
+    io.stdout(`Accepted the privacy policy (version ${p.version}).
+`);
+    return null;
+  }
+}
+async function acceptCommand(ctx) {
+  const { io, client, flags } = ctx;
+  const usage = "Usage: mokkan accept [--yes [--version <v>]]";
+  if (flags.version === "") throw new UserError(`--version needs a value.
+${usage}`);
+  if (typeof flags.version === "string" && flags.yes !== true) throw new UserError(`--version needs --yes.
+${usage}`);
+  const inTerminal = `Accept the privacy policy in a terminal: ${terminalCommand("accept")}`;
+  if (flags["exit-zero"] === true) throw new UserError(inTerminal);
+  if (!client.hasCredentials()) throw new UserError("Not logged in. Run: mokkan login");
+  if (flags.yes !== true) {
+    if (!io.isTTY) throw new UserError(inTerminal);
+    return await askToAccept(ctx) ?? 0;
+  }
+  const p = await client.privacy();
+  const version = typeof flags.version === "string" ? flags.version : p.version;
+  io.stdout(formatPolicy(p));
+  await client.acceptPrivacy(version);
+  io.stdout(`Accepted the privacy policy (version ${version}).
+`);
+  return 0;
+}
+async function deleteAccountCommand(ctx) {
+  const { io, client } = ctx;
+  if (!io.isTTY) throw new UserError(`Run it in a terminal: ${terminalCommand("delete-account")}`);
+  const me = await client.me();
+  io.stdout(`This deletes ${me.email}, its ${plural(me.reminder_count, "reminder")} and ${plural(me.credit_balance, "unspent credit")}. Payment records are kept without your name.
+`);
+  const password = await io.prompt("Password: ", true);
+  const word = await io.prompt("Type delete to delete the account: ", false);
+  if (word.trim() !== "delete") throw new UserError("Not deleted.");
+  try {
+    await client.deleteAccount(password);
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "wrong_password") throw new UserError("Wrong password. Nothing was deleted.");
+    throw err;
+  }
+  removeAccountFiles(io.env);
+  io.stdout("Account deleted.\n");
+  return 0;
+}
+
 // src/commands/ui.ts
 async function uiCommand(ctx) {
   const { io, client } = ctx;
@@ -2250,7 +2481,8 @@ async function uiCommand(ctx) {
     now: ctx.now,
     openUrl: io.openUrl
   });
-  return runTerminal(app, io, io.tty);
+  const code = await runTerminal(app, io, io.tty);
+  return app.deleteRequested ? deleteAccountCommand(ctx) : code;
 }
 
 // src/hooks.ts
@@ -2313,7 +2545,7 @@ function safeAppendHookLog(env, kind, err) {
       markNotified(env);
       return;
     }
-    if (err instanceof ApiError && (err.status === 402 || err.status === 429)) {
+    if (err instanceof ApiError && (err.status === 402 || err.status === 429 || isPrivacyRequired(err))) {
       const suffix = `.${err.status}`;
       if (notifiedRecently(env, suffix)) return;
       appendHookLog(env, kind, err.message);
@@ -2387,7 +2619,7 @@ async function watchCommand(ctx) {
       try {
         await watchOnce(ctx);
       } catch (err) {
-        if (err instanceof ApiError && err.code === "no_credentials" || err instanceof SessionExpiredError) throw err;
+        if (err instanceof ApiError && err.code === "no_credentials" || err instanceof SessionExpiredError || isPrivacyRequired(err)) throw err;
         ctx.io.stderr(`${ctx.now().toISOString()} watch error: ${err instanceof Error ? err.message : String(err)}
 `);
       }
@@ -2512,7 +2744,9 @@ var VALUE_FLAGS = /* @__PURE__ */ new Set(["otp", "source", "interval"]);
 var COMMAND_FLAGS = /* @__PURE__ */ new Map([
   ["edit", { boolean: ["clear-due"], value: ["text", "in", "at"] }],
   ["buy", { boolean: ["no-open"], value: ["pack"] }],
-  ["sync", { boolean: ["deliver"], value: [] }]
+  ["sync", { boolean: ["deliver"], value: [] }],
+  ["accept", { boolean: ["yes"], value: ["version"] }],
+  ["register", { boolean: [], value: ["accept-privacy"] }]
 ]);
 function parseArgs(argv) {
   if (argv[0] !== "--argline") return parseWords(argv);
@@ -2576,9 +2810,14 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
                                   buy credits: prints (and opens) a Stripe Checkout link
   mokkan balance [--json]         credit balance and recent transactions
   mokkan feedback <text>          send feedback to the mokkan developer (free)
-  mokkan register [email]         create an account (--start | --complete --otp <code>)
+  mokkan register [email]         create an account (--start | --complete --otp <code>); shows the privacy
+                                  policy first (without a terminal: --accept-privacy <version>)
   mokkan login [email]            log in (password from prompt or MOKKAN_PASSWORD)
   mokkan logout
+  mokkan privacy [--json]         the privacy policy: version, link and summary
+  mokkan accept [--yes [--version <v>]]
+                                  accept the current privacy policy (asks in a terminal; --yes accepts without asking)
+  mokkan delete-account           delete your account and everything on it (in a terminal; asks first)
   mokkan heartbeat [--source X]   tell the server a session is active
   mokkan deliver <id>...          mark reminders shown in a session (the pane does this)
   mokkan sync [--source X] [--deliver]
@@ -2590,6 +2829,8 @@ var USAGE = `Usage: mokkan <command> [args] [--json]
 
   --exit-zero                     report errors on stdout and always exit 0 (for the /mokkan slash command)
   --argline "<words>"             first argument only: split the string on whitespace and use it as the arguments
+
+Privacy policy: ${PRIVACY_URL}. To delete your account and everything on it, run mokkan delete-account in a terminal.
 `;
 function sleep(ms, signal) {
   return new Promise((resolve) => {
@@ -2660,6 +2901,7 @@ function reportError(err, io) {
     if (hint) io.stderr(`${hint}
 `);
     if (err.status === 402 && err.code === "insufficient_credits") return EXIT_INSUFFICIENT_CREDITS;
+    if (isPrivacyRequired(err) || isPrivacyStale(err)) return EXIT_PRIVACY_REQUIRED;
     return err.status >= 500 || err.status === 429 ? 2 : 1;
   }
   if (err instanceof NetworkError || err instanceof CredentialsLockError) {
@@ -2730,64 +2972,80 @@ Logged out.
     }
     const client = makeClient(creds, io, 5e3);
     const ctx = { io, client, json: flags.json === true, flags, now: io.now };
-    switch (command) {
-      case void 0:
-      case "list":
-        return await listCommand(ctx);
-      case "done":
-        return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
-      case "undone":
-        return await markDoneCommand(ctx, args, false);
-      case "pending":
-        return await pendingCommand(ctx);
-      case "ui": {
-        const stop = new AbortController();
-        try {
-          return await uiCommand({ ...ctx, client: makeClient(creds, io, 5e3, stop.signal) });
-        } finally {
-          stop.abort();
-        }
-      }
-      case "push":
-        return await pushCommand(ctx, args);
-      case "pop":
-        return await takeCommand(ctx, "pop");
-      case "dequeue":
-        return await takeCommand(ctx, "dequeue");
-      case "in":
-        return await inCommand(ctx, args);
-      case "ack":
-        return await ackCommand(ctx, args);
-      case "deliver":
-        return await deliverCommand(ctx, args);
-      case "edit":
-        return await editCommand(ctx, args);
-      case "register":
-        return await registerCommand(ctx, args);
-      case "login":
-        return await loginCommand(ctx, args);
-      case "logout":
-        return await logoutCommand(ctx);
-      case "status":
-        return await statusCommand(ctx);
-      case "buy":
-        return await buyCommand(ctx);
-      case "balance":
-        return await balanceCommand(ctx);
-      case "heartbeat":
-        return await heartbeatCommand(ctx);
-      case "sync":
-        return await syncCommand(ctx);
-      case "feedback":
-        return await feedbackCommand(ctx, args);
-      case "watch":
-        return await watchCommand(ctx);
-      default:
-        throw new UserError(`Unknown command "${command}".
-${USAGE}`);
+    try {
+      return await dispatch(command, args, ctx, creds);
+    } catch (err) {
+      if (!isPrivacyRequired(err) || !io.isTTY || ctx.json || command === "watch") throw err;
+      const code = await askToAccept(ctx);
+      return code ?? await dispatch(command, args, ctx, creds);
     }
   } catch (err) {
     return reportError(err, io);
+  }
+}
+async function dispatch(command, args, ctx, creds) {
+  const { io } = ctx;
+  switch (command) {
+    case void 0:
+    case "list":
+      return await listCommand(ctx);
+    case "done":
+      return args.length > 0 ? await markDoneCommand(ctx, args, true) : await doneCommand(ctx);
+    case "undone":
+      return await markDoneCommand(ctx, args, false);
+    case "pending":
+      return await pendingCommand(ctx);
+    case "ui": {
+      const stop = new AbortController();
+      try {
+        return await uiCommand({ ...ctx, client: makeClient(creds, io, 5e3, stop.signal) });
+      } finally {
+        stop.abort();
+      }
+    }
+    case "push":
+      return await pushCommand(ctx, args);
+    case "pop":
+      return await takeCommand(ctx, "pop");
+    case "dequeue":
+      return await takeCommand(ctx, "dequeue");
+    case "in":
+      return await inCommand(ctx, args);
+    case "ack":
+      return await ackCommand(ctx, args);
+    case "deliver":
+      return await deliverCommand(ctx, args);
+    case "edit":
+      return await editCommand(ctx, args);
+    case "register":
+      return await registerCommand(ctx, args);
+    case "login":
+      return await loginCommand(ctx, args);
+    case "logout":
+      return await logoutCommand(ctx);
+    case "status":
+      return await statusCommand(ctx);
+    case "buy":
+      return await buyCommand(ctx);
+    case "balance":
+      return await balanceCommand(ctx);
+    case "heartbeat":
+      return await heartbeatCommand(ctx);
+    case "sync":
+      return await syncCommand(ctx);
+    case "feedback":
+      return await feedbackCommand(ctx, args);
+    case "watch":
+      return await watchCommand(ctx);
+    case "privacy":
+      return await privacyCommand(ctx);
+    case "accept":
+      return await acceptCommand(ctx);
+    case "delete-account":
+      return await deleteAccountCommand(ctx);
+    default:
+      throw new UserError(`Unknown command "${command}".
+${USAGE}`);
   }
 }
 var invokedDirectly = process.argv[1] !== void 0 && import.meta.url === pathToFileURL(realpathSync2(process.argv[1])).href;
@@ -2796,6 +3054,7 @@ if (invokedDirectly) {
 }
 export {
   EXIT_INSUFFICIENT_CREDITS,
+  EXIT_PRIVACY_REQUIRED,
   USAGE,
   defaultIO,
   main,

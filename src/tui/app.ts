@@ -1,9 +1,10 @@
-import { ApiError, NetworkError, apiErrorHint, type MokkanClient } from '../client.js';
+import { ApiError, NetworkError, PRIVACY_URL, apiErrorHint, type MokkanClient } from '../client.js';
 import { EMAIL_RE } from '../commands/auth.js';
 import { isTrustedCheckoutUrl } from '../commands/billing.js';
 import { parseDuration } from '../duration.js';
 import { SessionExpiredError } from '../errors.js';
 import { formatRelative, shortId } from '../format.js';
+import { EXIT_PRIVACY_REQUIRED, isPrivacyRequired, isPrivacyStale } from '../privacy.js';
 import { cleanText } from '../text.js';
 import type { CheckoutResponse, Reminder } from '../types.js';
 import type { Key } from './keys.js';
@@ -73,6 +74,8 @@ export class TuiApp {
   readonly state: TuiState;
   /** Set when the app wants to quit; the driver resolves with it. */
   exitCode: number | null = null;
+  /** Set with `d` in the acceptance view: `mokkan ui` leaves the full screen and runs the delete-account flow. */
+  deleteRequested = false;
   /** Called after every state change; the driver redraws. */
   onChange: () => void = () => undefined;
   private size: Size = { columns: 80, rows: 24 };
@@ -111,6 +114,7 @@ export class TuiApp {
   handleKey(key: Key): Promise<void> {
     const s = this.state;
     if (s.screen === 'login') return this.loginKey(key);
+    if (s.screen === 'privacy') return this.privacyKey(key);
     if (s.mode.kind === 'input') return this.inputKey(s.mode, key);
     if (key.name === 'paste') return Promise.resolve(); // pasted text never runs commands
     if (s.mode.kind === 'confirm') return this.confirmKey(s.mode, key);
@@ -171,6 +175,65 @@ export class TuiApp {
       this.changed();
     }
     return Promise.resolve();
+  }
+
+  /** The acceptance view: y accepts the version shown, n quits (exit 4), d quits into the delete-account flow. */
+  private privacyKey(key: Key): Promise<void> {
+    const ch = key.name === 'char' ? key.ch : '';
+    if (ch === 'n' || ch === 'q' || key.name === 'escape' || key.name === 'ctrl-c') {
+      this.exitCode = EXIT_PRIVACY_REQUIRED;
+      this.changed();
+      return Promise.resolve();
+    }
+    if (ch === 'd') {
+      this.deleteRequested = true;
+      return this.quit();
+    }
+    if (ch === 'y') return this.enqueue(() => this.acceptShown());
+    return Promise.resolve();
+  }
+
+  /** Accepts exactly the version on screen; when it changed meanwhile (409), the new one is shown instead. */
+  private async acceptShown(): Promise<void> {
+    const s = this.state;
+    const p = s.privacy;
+    if (s.screen !== 'privacy' || p === null) return; // a second y queued behind the first
+    if (p.summary === null || p.version === null) { await this.loadPolicy(); return; }
+    try {
+      await this.client.acceptPrivacy(p.version);
+    } catch (err) {
+      if (!isPrivacyStale(err)) throw err;
+      await this.loadPolicy();
+      this.say('The privacy policy has just changed: this is the new version.', 'yellow');
+      return;
+    }
+    s.screen = 'dashboard';
+    s.privacy = null;
+    this.say('Privacy policy accepted.', 'green');
+    await this.doRefresh();
+  }
+
+  /** Shows the acceptance view for a 403 privacy_not_accepted, then fetches the summary into it. */
+  private async toPrivacy(err: ApiError): Promise<void> {
+    const s = this.state;
+    const body = (err.body ?? {}) as { version?: unknown; url?: unknown };
+    s.screen = 'privacy';
+    s.mode = { kind: 'normal' };
+    s.message = null;
+    s.privacy = { version: typeof body.version === 'string' ? body.version : null, url: typeof body.url === 'string' ? body.url : PRIVACY_URL, summary: null };
+    this.changed();
+    await this.loadPolicy();
+  }
+
+  /** GET /privacy into the acceptance view; a failure is shown on its message line (y tries again). */
+  private async loadPolicy(): Promise<void> {
+    try {
+      const p = await this.client.privacy();
+      this.state.privacy = { version: p.version, url: p.url, summary: p.summary };
+      this.changed();
+    } catch (err) {
+      this.say(`${errorText(err)} (y tries again)`, 'red');
+    }
   }
 
   private switchField(field: 'email' | 'password'): void {
@@ -523,6 +586,7 @@ export class TuiApp {
       this.clampSelection();
     } catch (err) {
       if (this.sessionLost(err)) { this.toLogin('Session expired, log in again.'); return; }
+      if (isPrivacyRequired(err)) { await this.toPrivacy(err as ApiError); return; }
       s.error = err instanceof NetworkError
         ? { kind: 'offline', message: err.message }
         : { kind: 'error', message: errorText(err) };
@@ -558,6 +622,7 @@ export class TuiApp {
   private toLogin(message: string): void {
     const s = this.state;
     s.screen = 'login';
+    s.privacy = null;
     s.login = emptyLogin();
     s.login.error = { text: message, tone: 'red' };
     s.reminders = []; s.done = null; s.version = null; s.selected = 0; s.scroll = 0;
@@ -571,6 +636,7 @@ export class TuiApp {
   /** Maps a failed server call to the message line; only a lost session changes the screen. */
   private async fail(err: unknown): Promise<void> {
     if (this.sessionLost(err)) { this.toLogin('Session expired, log in again.'); return; }
+    if (isPrivacyRequired(err)) { await this.toPrivacy(err as ApiError); return; }
     if (err instanceof NetworkError) { this.say(`Server unreachable: ${err.message}`, 'red'); return; }
     if (err instanceof ApiError) {
       if (isStale(err)) {

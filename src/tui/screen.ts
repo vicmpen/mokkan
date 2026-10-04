@@ -99,6 +99,8 @@ export function render(state: TuiState, size: Size, now: Date): string[] {
     lines = [fit('mokkan ui: terminal too small', columns - 1)];
   } else if (state.screen === 'login') {
     lines = loginLines(state, drawable(size));
+  } else if (state.screen === 'privacy') {
+    lines = privacyLines(state, drawable(size));
   } else {
     lines = dashboardLines(state, drawable(size), now);
   }
@@ -308,4 +310,29 @@ function loginLines(state: TuiState, size: Size): string[] {
     line([part(' Enter next field / log in · Tab switch field · Esc quit', 'dim')], [], columns),
     line([part(' No account? Quit and run: mokkan register you@example.com', 'dim')], [], columns),
   ];
+}
+
+// ---- privacy ----
+
+/** The acceptance view: the summary wrapped to the width, the URL, the message line and the keys at the bottom. */
+function privacyLines(state: TuiState, size: Size): string[] {
+  const { columns, rows } = size;
+  const p = state.privacy!;
+  const text = (t: string, ...styles: Style[]): string => line([part(` ${t}`, ...styles)], [], columns);
+  const out = [
+    line([part(' mokkan', 'bold'), part(` · ${clean(state.email)} · ${state.host}`)], [part('privacy policy', 'dim')], columns),
+    '',
+    text(`The privacy policy${p.version === null ? '' : ` (version ${clean(p.version)})`} needs your acceptance.`, 'bold'),
+    '',
+  ];
+  if (p.summary === null) out.push(text('Loading the summary…', 'dim'));
+  for (const l of p.summary ?? []) out.push(...wrap(clean(l), columns - 1, columns - 1).map((t) => text(t)));
+  out.push('', text(`Full text: ${clean(p.url)}`));
+  // The message and the keys stay on the last two rows; a summary too tall for the terminal is cut.
+  out.splice(rows - 2);
+  while (out.length < rows - 2) out.push('');
+  const m = state.message;
+  out.push(m ? text(`${m.tone === 'red' ? 'error: ' : ''}${clean(m.text)}`, m.tone) : '');
+  out.push(text('y accept · n quit · d delete', 'yellow'));
+  return out;
 }

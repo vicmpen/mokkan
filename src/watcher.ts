@@ -1,6 +1,7 @@
 import { ApiError } from './client.js';
 import { SessionExpiredError, UserError } from './errors.js';
 import { formatReminderLine } from './format.js';
+import { isPrivacyRequired } from './privacy.js';
 import type { Ctx } from './cli.js';
 
 const DEFAULT_INTERVAL_SECONDS = 60;
@@ -34,8 +35,9 @@ export async function watchCommand(ctx: Ctx): Promise<number> {
       try {
         await watchOnce(ctx);
       } catch (err) {
-        // Logged out, or the session expired and the credentials were removed: polling cannot recover.
-        if ((err instanceof ApiError && err.code === 'no_credentials') || err instanceof SessionExpiredError) throw err;
+        // Logged out, the session expired and the credentials were removed, or the privacy policy must be accepted
+        // (exit 4): polling cannot recover.
+        if ((err instanceof ApiError && err.code === 'no_credentials') || err instanceof SessionExpiredError || isPrivacyRequired(err)) throw err;
         ctx.io.stderr(`${ctx.now().toISOString()} watch error: ${err instanceof Error ? err.message : String(err)}\n`);
       }
       if (once) break;

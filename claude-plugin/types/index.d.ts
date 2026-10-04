@@ -28,6 +28,9 @@ export type MokkanTab = 'todos' | 'reminders' | 'archived'
 /** The last result, drawn on the status line until 15 s pass or the next key: green, yellow for a nudge, red for an error; `id` counts the messages said. */
 export type MokkanMessage = { text: string; tone: 'ok' | 'note' | 'error'; id: number } | null
 
+/** The privacy policy as `mokkan privacy --json` gives it: the version accepted, where the full text is, and its summary lines. */
+export type MokkanPolicy = { version: string; url: string; summary: string[] }
+
 /** What the pane's field is for: a new todo or reminder, or a change to the pointed one. */
 export type MokkanMode =
   | { kind: 'normal' }
@@ -37,8 +40,9 @@ export type MokkanMode =
   /**
    * Login or registration: the email, the emailed code (register only), then the password.
    * `masked` is the bullets drawn for the password; the text itself never enters state.
+   * Registration first shows `policy` (step `policy`), and passes its version to both register steps; null for a login.
    */
-  | { kind: 'auth'; flow: 'login' | 'register'; step: 'email' | 'otp' | 'password'; email: string; otp: string; masked: string }
+  | { kind: 'auth'; flow: 'login' | 'register'; step: 'policy' | 'email' | 'otp' | 'password'; email: string; otp: string; masked: string; policy: MokkanPolicy | null }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -54,6 +58,8 @@ declare module 'claude-code' {
       syncing: boolean
       /** True while the help view (`h`) replaces the list. */
       help: boolean
+      /** The policy the account must accept (a CLI call exited 4): its acceptance view replaces the list until accepted. */
+      privacy: MokkanPolicy | null
     }
   }
 }
