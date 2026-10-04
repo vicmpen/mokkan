@@ -85,11 +85,12 @@ export function safeAppendHookLog(env: NodeJS.ProcessEnv, kind: string, err: unk
       markNotified(env);
       return;
     }
-    if (err instanceof ApiError && err.status === 402) {
-      // Out of credits: logged at most hourly, like "not logged in", so hooks never spam hook.log.
-      if (notifiedRecently(env, '.402')) return;
+    if (err instanceof ApiError && (err.status === 402 || err.status === 429)) {
+      // Out of credits or rate limited: logged at most hourly, like "not logged in", so hooks never spam hook.log.
+      const suffix = `.${err.status}`;
+      if (notifiedRecently(env, suffix)) return;
       appendHookLog(env, kind, err.message);
-      markNotified(env, '.402');
+      markNotified(env, suffix);
       return;
     }
     appendHookLog(env, kind, err instanceof Error ? err.message : String(err));

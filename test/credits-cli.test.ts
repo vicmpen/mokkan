@@ -48,7 +48,7 @@ describe('credits in the CLI', () => {
   it('a 429 with retry-after prints minutes from 60 s up', async () => {
     server.on('POST', '/reminders', () => ({ status: 429, headers: { 'retry-after': '3600' }, body: { error: 'rate_limited', message: 'Too many requests' } }));
     const r = await run(['push', 'hello']);
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(2);
     expect(r.stderr).toContain('try again in about 60 minutes');
   });
   it('buy --pack with an empty value is a usage error', async () => {

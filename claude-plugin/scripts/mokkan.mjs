@@ -2313,10 +2313,11 @@ function safeAppendHookLog(env, kind, err) {
       markNotified(env);
       return;
     }
-    if (err instanceof ApiError && err.status === 402) {
-      if (notifiedRecently(env, ".402")) return;
+    if (err instanceof ApiError && (err.status === 402 || err.status === 429)) {
+      const suffix = `.${err.status}`;
+      if (notifiedRecently(env, suffix)) return;
       appendHookLog(env, kind, err.message);
-      markNotified(env, ".402");
+      markNotified(env, suffix);
       return;
     }
     appendHookLog(env, kind, err instanceof Error ? err.message : String(err));
@@ -2659,7 +2660,7 @@ function reportError(err, io) {
     if (hint) io.stderr(`${hint}
 `);
     if (err.status === 402 && err.code === "insufficient_credits") return EXIT_INSUFFICIENT_CREDITS;
-    return err.status >= 500 ? 2 : 1;
+    return err.status >= 500 || err.status === 429 ? 2 : 1;
   }
   if (err instanceof NetworkError || err instanceof CredentialsLockError) {
     io.stderr(`${err.message}

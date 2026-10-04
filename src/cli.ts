@@ -209,7 +209,7 @@ export function defaultIO(): CliIO {
   };
 }
 
-/** Exit code when the server answers 402 insufficient_credits (1 = user error, 2 = server/network). */
+/** Exit code when the server answers 402 insufficient_credits (1 = user error, 2 = server/network/rate limit). */
 export const EXIT_INSUFFICIENT_CREDITS = 3;
 
 function reportError(err: unknown, io: CliIO): number {
@@ -222,7 +222,8 @@ function reportError(err: unknown, io: CliIO): number {
     const hint = apiErrorHint(err);
     if (hint) io.stderr(`${hint}\n`);
     if (err.status === 402 && err.code === 'insufficient_credits') return EXIT_INSUFFICIENT_CREDITS;
-    return err.status >= 500 ? 2 : 1;
+    // A 429 is transient like a 5xx: the pane shows 'offline' for exit 2 but treats exit 1 as logged out.
+    return err.status >= 500 || err.status === 429 ? 2 : 1;
   }
   if (err instanceof NetworkError || err instanceof CredentialsLockError) {
     io.stderr(`${err.message}\n`);

@@ -107,6 +107,16 @@ describe('mokkan hook', () => {
     expect(lines[0]).toMatch(/^\d{4}-\d{2}-\d{2}T[^ ]+ stop Cannot reach http:\/\/127\.0\.0\.1:1/);
   });
 
+  it('rate limited: exit 0, silent, logged once an hour rather than on every hook', async () => {
+    server.on('POST', '/heartbeat', () => ({ status: 429, headers: { 'retry-after': '30' }, body: { error: 'rate_limited', message: 'Too many requests; retry in 30s' } }));
+    for (let i = 0; i < 3; i++) {
+      expect(await h.run(['hook', 'stop'], { serverUrl: server.url, loggedIn: true, stdin: '{}' })).toEqual({ code: 0, stdout: '', stderr: '' });
+    }
+    const lines = logLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('stop Too many requests');
+  });
+
   it('no credentials: empty stdout, exit 0, logged', async () => {
     const res = await h.run(['hook', 'session-start'], { serverUrl: server.url, stdin: '{}' });
     expect(res).toEqual({ code: 0, stdout: '', stderr: '' });
