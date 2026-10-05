@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Shells for the prompt hook tests
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
       - run: npm run typecheck
       - run: npm test
       - name: Plugin bundle is up to date
@@ -32,6 +34,19 @@ jobs:
         run: |
           npx -y @anthropic-ai/claude-code plugin validate --strict .
           npx -y @anthropic-ai/claude-code plugin validate --strict claude-plugin
+
+  # The prompt hook in macOS's own shells: /bin/bash 3.2, Homebrew's bash on PATH, and zsh.
+  macos-shells:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx vitest run test/notify-shells.test.ts
 
   # engines.node is >=20.3.0: the built CLI and the plugin bundle must at least start there.
   node20:

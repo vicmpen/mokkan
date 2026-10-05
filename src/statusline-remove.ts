@@ -1,7 +1,8 @@
-import { constants, copyFileSync, existsSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { CliIO } from './cli.js';
+import { removeBlockText, replaceFile } from './rcfile.js';
 
 /**
  * 0.3.0 removed the status line. `mokkan statusline` stays for one release so that nothing breaks for people who set
@@ -47,21 +48,6 @@ function stableCliPath(env: NodeJS.ProcessEnv): string {
   return path.join(base, 'mokkan', 'mokkan.mjs');
 }
 
-/** Replaces `file` atomically through a symlink, keeping its mode, after a `<file>.mokkan-bak-<ts>` backup. Returns the backup path. */
-function replaceFile(file: string, content: string, now: Date): string {
-  let target = file;
-  try { target = realpathSync(file); } catch { /* keep */ }
-  const mode = statSync(target).mode & 0o777;
-  const stamp = now.toISOString().replace(/\.\d+Z$/, 'Z').replace(/[-:]/g, '');
-  let bak = `${file}.mokkan-bak-${stamp}`;
-  for (let n = 1; existsSync(bak); n++) bak = `${file}.mokkan-bak-${stamp}-${n}`;
-  copyFileSync(file, bak, constants.COPYFILE_EXCL);
-  const tmp = `${target}.${process.pid}.tmp`;
-  writeFileSync(tmp, content, { mode });
-  renameSync(tmp, target);
-  return bak;
-}
-
 /** A status line command that is nothing but a mokkan invocation. */
 const isMokkanCommand = (command: string): boolean => /(^|[\s/])(mokkan|mokkan\.mjs|cli\.m?js)\s+statusline(\s|$)/.test(command) && command.includes('mokkan');
 
@@ -87,17 +73,11 @@ function removeClaude(env: NodeJS.ProcessEnv, now: Date, dryRun: boolean): strin
 function removeTmux(env: NodeJS.ProcessEnv, now: Date, dryRun: boolean): string[] {
   const file = tmuxConfPath(env);
   if (!existsSync(file)) return [];
-  const text = readFileSync(file, 'utf8');
-  const lines = text.replace(/\n$/, '').split('\n');
-  const trimmed = lines.map((l) => l.trimEnd());
-  const start = trimmed.indexOf(TMUX_BEGIN);
-  const end = trimmed.indexOf(TMUX_END);
-  if (start === -1 && end === -1) return [`tmux: no mokkan block in ${file}; nothing to remove.`];
-  if (start === -1 || end === -1 || end < start) return [`tmux: ${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`];
-  const next = [...lines.slice(0, start), ...lines.slice(end + 1)];
-  if (start > 0 && next[start - 1]?.trim() === '' && (start === next.length || next[start]?.trim() === '')) next.splice(start - 1, 1);
+  const r = removeBlockText(readFileSync(file, 'utf8'), TMUX_BEGIN, TMUX_END);
+  if (r.status === 'absent') return [`tmux: no mokkan block in ${file}; nothing to remove.`];
+  if (r.status === 'incomplete') return [`tmux: ${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`];
   if (dryRun) return [`tmux: would remove the mokkan block from ${file}.`];
-  const bak = replaceFile(file, next.length > 0 ? `${next.join('\n')}\n` : '', now);
+  const bak = replaceFile(file, r.text, now);
   return [`tmux: removed the mokkan block from ${file} (backup: ${bak}). Reload with: tmux source-file ${file}`];
 }
 

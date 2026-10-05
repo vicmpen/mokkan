@@ -83,16 +83,16 @@
 - [x] The plist and unit contents are snapshot-tested. The contract test runs the round trip for every agent in a temp HOME with a fake `Spawner` that records `launchctl`/`systemctl` argv.
 
 ### Task 6: Shells and rc files
-- [ ] Move `replaceFile` from `statusline-remove.ts` into `src/rcfile.ts` (exported), add marked-block insert and remove, and skip the write and the backup when the content would not change.
-- [ ] `zsh.ts`, `bash.ts` and `fish.ts`: `snippet({ node, cli, version, interval, osc })`, `rcFile(env, platform)` (bash uses `~/.bash_profile` on macOS when it exists, `~/.bashrc` otherwise) and `installStyle`. Each snippet matches the spec:
+- [x] Move `replaceFile` from `statusline-remove.ts` into `src/rcfile.ts` (exported), add marked-block insert and remove, and skip the write and the backup when the content would not change.
+- [x] `zsh.ts`, `bash.ts` and `fish.ts`: `snippet({ node, cli, version, interval, osc })`, `rcFile(env, platform)` (bash uses `~/.bash_profile` on macOS when it exists, `~/.bashrc` otherwise) and `installStyle`. Each snippet matches the spec:
   - numeric stamp guard;
   - quoted comparison;
   - `</dev/null` on the background poll;
   - the `MOKKAN_NOTIFY` check;
   - a per-shell `__mokkan_shown`;
   - OSC built and tmux-wrapped at print time, with `2>/dev/null` on `/dev/tty`.
-- [ ] `poll` regenerates `init.<shell>` when its version line differs; test it.
-- [ ] Integration test `test/notify-shells.test.ts`, skipped per shell if that shell is missing. It runs `zsh -i`, `bash -i` and `fish -i` with a stub CLI that writes the files, and covers:
+- [x] `poll` regenerates `init.<shell>` when its version line differs; test it.
+- [x] Integration test `test/notify-shells.test.ts`, skipped per shell if that shell is missing. It runs `zsh -i`, `bash -i` and `fish -i` with a stub CLI that writes the files, and covers:
   - the set prints once per shell, and two shells each print it;
   - the second prompt is silent;
   - an ack (the set shrinks) reprints the rest;
@@ -101,7 +101,7 @@
   - `MOKKAN_NOTIFY=0` starts no poll;
   - fish conf.d does nothing in a non-interactive `fish -c`.
   The bash case also runs with bash-preexec loaded and with `PROMPT_COMMAND` set to `foo;`, to `foo` plus a newline, and to an array.
-- [ ] CI: install `zsh fish` in `.github/workflows/ci.yml`, and add a `macos-latest` job that runs the bash 3.2 and zsh cases.
+- [x] CI: install `zsh fish` in `.github/workflows/ci.yml`, and add a `macos-latest` job that runs the bash 3.2 and zsh cases.
 
 ### Task 7: Commands
 - [ ] `src/commands/notify.ts`:

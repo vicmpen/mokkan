@@ -12,6 +12,7 @@ import { loadNotifyConfig, type NotifyConfig } from './config.js';
 import { osOf } from './detect.js';
 import { formatDueLocal, formatNotifyLine } from './format.js';
 import { forOsc, sanitizeText } from './sanitize.js';
+import { ensureInitScripts } from './shells/index.js';
 import {
   pruneNotified, readNotified, readStamp, tryLockPoll, writeNotified, writeShellFiles, writeStamp, writeStateFile,
   type NotifiedState,
@@ -47,6 +48,13 @@ export interface PollDeps {
   timeZone?: string;
   overallTimeoutMs?: number;
   notifierTimeoutMs?: number;
+  /**
+   * The absolute node and cli.js paths and the CLI version baked into `init.<shell>`. With all three, each poll
+   * regenerates the init scripts that exist and differ (after an update, or a changed interval or osc mode).
+   */
+  node?: string;
+  cli?: string;
+  version?: string;
 }
 
 export type PollStatus = 'skipped-disabled' | 'skipped-locked' | 'skipped-fresh' | 'ok' | 'error';
@@ -123,6 +131,7 @@ export async function pollOnce(deps: PollDeps): Promise<PollOutcome> {
       if (stamp <= nowSeconds && nowSeconds - stamp < config.interval) return outcome('skipped-fresh');
       // Before any network I/O, so a slow or failing server cannot make every prompt start node.
       writeStamp(env, nowSeconds);
+      regenerateInitScripts(deps, config);
       const result = await withDeadline(deps, config, now);
       try {
         writeStateFile(env, LAST_FILE, `${JSON.stringify({ at: now.toISOString(), ...result } satisfies LastPoll)}\n`);
@@ -134,6 +143,17 @@ export async function pollOnce(deps: PollDeps): Promise<PollOutcome> {
   } catch (err) {
     safeAppendHookLog(env, 'notify', err);
     return outcome('error', { error: message(err) });
+  }
+}
+
+/** Rewrites stale `init.<shell>` files (cheap: a read and a compare each); a failure is logged, never fatal. */
+function regenerateInitScripts(deps: PollDeps, config: NotifyConfig): void {
+  const { node, cli, version } = deps;
+  if (node === undefined || cli === undefined || version === undefined) return;
+  try {
+    ensureInitScripts(deps.env, { node, cli, version, interval: config.interval, osc: config.osc });
+  } catch (err) {
+    appendHookLogHourly(deps.env, 'notify', 'init', message(err));
   }
 }
 

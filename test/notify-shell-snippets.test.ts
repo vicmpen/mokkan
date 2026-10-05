@@ -1,0 +1,173 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import type { OscMode } from '../src/notify/config.js';
+import { SHELLS, shellByName, shellFromEnv, type NotifyShell, type SnippetOptions } from '../src/notify/shells/index.js';
+import { bash } from '../src/notify/shells/bash.js';
+import { fish } from '../src/notify/shells/fish.js';
+import { zsh } from '../src/notify/shells/zsh.js';
+import { fishQuote, shQuote } from '../src/notify/shells/types.js';
+
+const NODE = "/opt/my node/it's/node";
+const CLI = "/opt/mokkan cli/dist/cli.js";
+const opts = (osc: OscMode, over: Partial<SnippetOptions> = {}): SnippetOptions =>
+  ({ node: NODE, cli: CLI, version: '0.8.0', interval: 75, osc, ...over });
+
+describe('shell registry', () => {
+  it('has zsh, bash and fish, found by name and by $SHELL', () => {
+    expect(SHELLS.map((s) => s.name)).toEqual(['zsh', 'bash', 'fish']);
+    expect(shellByName('bash')).toBe(bash);
+    expect(shellByName('sh')).toBeNull();
+    expect(shellFromEnv({ SHELL: '/usr/local/bin/fish' })).toBe(fish);
+    expect(shellFromEnv({ SHELL: '/bin/zsh' })).toBe(zsh);
+    expect(shellFromEnv({ SHELL: '-bash' })).toBe(bash);
+    expect(shellFromEnv({ SHELL: '/bin/dash' })).toBeNull();
+    expect(shellFromEnv({})).toBeNull();
+  });
+});
+
+describe('quoting', () => {
+  it('sh: single quotes with an escaped quote; fish: backslash-escaped quote and backslash', () => {
+    expect(shQuote("a b'c")).toBe("'a b'\\''c'");
+    expect(fishQuote("a b'c\\d")).toBe("'a b\\'c\\\\d'");
+  });
+});
+
+describe('rc files', () => {
+  let home: string;
+  beforeEach(() => { home = mkdtempSync(path.join(tmpdir(), 'mokkan-rc-')); });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it('zsh: $ZDOTDIR/.zshrc, else ~/.zshrc', () => {
+    expect(zsh.rcFile({ HOME: home }, 'linux')).toBe(path.join(home, '.zshrc'));
+    expect(zsh.rcFile({ HOME: home, ZDOTDIR: '/z' }, 'darwin')).toBe('/z/.zshrc');
+  });
+
+  it('bash: ~/.bash_profile on macOS when it exists, else ~/.bashrc', () => {
+    expect(bash.rcFile({ HOME: home }, 'darwin')).toBe(path.join(home, '.bashrc'));
+    writeFileSync(path.join(home, '.bash_profile'), '');
+    expect(bash.rcFile({ HOME: home }, 'darwin')).toBe(path.join(home, '.bash_profile'));
+    expect(bash.rcFile({ HOME: home }, 'linux')).toBe(path.join(home, '.bashrc'));
+  });
+
+  it('fish: a conf.d drop-in under XDG_CONFIG_HOME', () => {
+    expect(fish.rcFile({ HOME: home }, 'linux')).toBe(path.join(home, '.config', 'fish', 'conf.d', 'mokkan.fish'));
+    expect(fish.rcFile({ HOME: home, XDG_CONFIG_HOME: '/x' }, 'darwin')).toBe('/x/fish/conf.d/mokkan.fish');
+    expect(fish.installStyle).toBe('drop-in');
+  });
+
+  it('init files live in the notify state directory', () => {
+    for (const s of SHELLS) expect(s.initFile({ HOME: home })).toBe(path.join(home, '.config', 'mokkan', 'notify', `init.${s.name}`));
+    expect(bash.initFile({ HOME: home, XDG_CONFIG_HOME: '/x' })).toBe('/x/mokkan/notify/init.bash');
+  });
+
+  it('rc lines source init.<shell> only when it is readable, at the XDG location chosen at runtime', () => {
+    expect(zsh.rcLine()).toBe('[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/mokkan/notify/init.zsh" ] && . "${XDG_CONFIG_HOME:-$HOME/.config}/mokkan/notify/init.zsh"');
+    expect(bash.rcLine()).toBe('[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/mokkan/notify/init.bash" ] && . "${XDG_CONFIG_HOME:-$HOME/.config}/mokkan/notify/init.bash"');
+    const drop = fish.rcLine();
+    expect(drop.split('\n')[0]).toMatch(/^# managed by mokkan/);
+    expect(drop).toContain('status is-interactive; or exit');
+    expect(drop).toContain('test -r "$__mokkan_init"; and source "$__mokkan_init"');
+    expect(drop).toContain('"$XDG_CONFIG_HOME/mokkan/notify/init.fish"');
+  });
+});
+
+const ESC_TEXT = '\\033';
+
+describe.each([
+  { shell: zsh as NotifyShell, guard: '[[ -o interactive ]] || return 0', poll: `{ { ${shQuote(NODE)} ${shQuote(CLI)} notify poll; } </dev/null >/dev/null 2>&1 &! }`, digits: '[[ $last == <-> && ${#last} -le 15 ]] || last=0', compare: '[[ $cur == "$__mokkan_shown" ]]' },
+  { shell: bash as NotifyShell, guard: '[[ $- == *i* ]] || return 0', poll: `( ${shQuote(NODE)} ${shQuote(CLI)} notify poll </dev/null >/dev/null 2>&1 & )`, digits: "case $last in ''|*[!0-9]*) last=0 ;; esac", compare: '[[ $cur == "$__mokkan_shown" ]]' },
+  { shell: fish as NotifyShell, guard: 'status is-interactive; or exit', poll: `command ${fishQuote(NODE)} ${fishQuote(CLI)} notify poll </dev/null >/dev/null 2>&1 &`, digits: "string match -qr '^[0-9]{1,15}$' -- \"$last\"; or set last 0", compare: 'test "x$cur" = "x$__mokkan_shown"' },
+])('$shell.name snippet', ({ shell, guard, poll, digits, compare }) => {
+  it('starts with the exact version line, then the non-interactive guard', () => {
+    const lines = shell.snippet(opts('off')).split('\n');
+    expect(lines[0]).toBe('# generated by mokkan 0.8.0 (interval 75, osc off); regenerate with: mokkan notify setup');
+    expect(lines[1]).toBe(guard);
+    expect(shell.snippet(opts('auto')).split('\n')[0]).toBe('# generated by mokkan 0.8.0 (interval 75, osc auto); regenerate with: mokkan notify setup');
+  });
+
+  it('bakes in the quoted node and cli paths and the interval, after the MOKKAN_NOTIFY check', () => {
+    const s = shell.snippet(opts('off'));
+    expect(s).toContain(poll);
+    expect(s).toMatch(/\b75\b/);
+    expect(s).not.toMatch(/MOKKAN_NOTIFY_INTERVAL/);
+    expect(s.indexOf('MOKKAN_NOTIFY')).toBeGreaterThan(-1);
+    expect(s.indexOf('MOKKAN_NOTIFY')).toBeLessThan(s.indexOf(poll));
+    expect(s).toContain(digits);
+    expect(s.indexOf(digits)).toBeLessThan(s.indexOf(poll));
+    expect(s).toContain(compare);
+    expect(s).toContain('__mokkan_shown');
+  });
+
+  it('osc off generates no escape sequences and no /dev/tty write', () => {
+    const s = shell.snippet(opts('off'));
+    expect(s).not.toContain('__mokkan_osc');
+    expect(s).not.toContain(']9;');
+    expect(s).not.toContain('SSH_CONNECTION');
+  });
+
+  it('osc 9 generates only OSC 9, plain and tmux-wrapped, sent only over SSH', () => {
+    const s = shell.snippet(opts('9'));
+    expect(s).toContain(`${ESC_TEXT}]9;%s\\007`);
+    expect(s).toContain(`${ESC_TEXT}Ptmux;${ESC_TEXT}${ESC_TEXT}]9;%s\\007${ESC_TEXT}`);
+    expect(s).not.toContain(']777;');
+    expect(s).not.toContain(']99;');
+    expect(s).toContain('SSH_CONNECTION');
+    expect(s).toContain('TMUX');
+    expect(s).toContain('__mokkan_tty');
+    expect(s).toContain('2>/dev/null');
+  });
+
+  it('osc auto generates all three and picks from TERM/TERM_PROGRAM', () => {
+    const s = shell.snippet(opts('auto'));
+    expect(s).toContain(']9;%s');
+    expect(s).toContain(']777;notify;mokkan;%s');
+    expect(s).toContain(']99;;%s');
+    expect(s).toContain('xterm-kitty');
+    expect(s).toContain('foot*');
+    expect(s).toContain('TERM_PROGRAM');
+  });
+
+  it('prints the text raw, never through prompt expansion or echo -e', () => {
+    const s = shell.snippet(opts('auto'));
+    expect(s).not.toMatch(/print -P ["']?[^'";\n]*\$/);
+    expect(s).not.toContain('echo -e');
+    expect(s).toMatch(/print -r -- "\$cur"|printf '%s\\n' "\$cur"/);
+  });
+
+  it('rejects options that would break the script', () => {
+    expect(() => shell.snippet(opts('off', { version: '1.0\nrm -rf ~' }))).toThrow();
+    expect(() => shell.snippet(opts('off', { node: 'node' }))).toThrow();
+    expect(() => shell.snippet(opts('off', { cli: '/a\nb' }))).toThrow();
+    expect(() => shell.snippet(opts('off', { interval: 1.5 }))).toThrow();
+  });
+});
+
+describe('shell-specific details', () => {
+  it('bash: EPOCHSECONDS with a date fallback, base-10 arithmetic, hooks for bash-preexec, array and string PROMPT_COMMAND', () => {
+    const s = bash.snippet(opts('off'));
+    expect(s).toContain('now=${EPOCHSECONDS:-$(date +%s)}');
+    expect(s).toContain('(( now - 10#$last >= 75 ))');
+    expect(s).toContain('precmd_functions+=(__mokkan_prompt)');
+    expect(s).toContain('PROMPT_COMMAND+=(__mokkan_prompt)');
+    expect(s).toContain('PROMPT_COMMAND=${PROMPT_COMMAND:+$PROMPT_COMMAND$__mokkan_nl}__mokkan_prompt');
+    expect(s).toContain("printf '\\033[35mmokkan:\\033[0m\\n'");
+  });
+
+  it('zsh: add-zsh-hook precmd and emulate -L zsh', () => {
+    const s = zsh.snippet(opts('9'));
+    expect(s).toContain('autoload -Uz add-zsh-hook; add-zsh-hook precmd __mokkan_precmd');
+    expect(s).toContain("print -P '%F{magenta}mokkan:%f'; print -r -- \"$cur\"");
+    expect(s.match(/emulate -L zsh/g)).toHaveLength(2);
+  });
+
+  it('fish: fish_prompt event, disown, and printf backslashes doubled for fish quoting', () => {
+    const s = fish.snippet(opts('99'));
+    expect(s).toContain('function __mokkan_prompt --on-event fish_prompt');
+    expect(s).toContain('disown $last_pid');
+    expect(s).toContain('set_color magenta; echo mokkan:; set_color normal');
+    expect(s).toContain("printf '\\033]99;;%s\\033\\\\\\\\' $argv[1]");
+    expect(s).toContain(`test -x ${fishQuote(NODE)}`);
+  });
+});

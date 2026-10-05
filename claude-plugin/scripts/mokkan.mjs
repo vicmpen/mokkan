@@ -2646,9 +2646,58 @@ async function watchCommand(ctx) {
 }
 
 // src/statusline-remove.ts
-import { constants, copyFileSync, existsSync as existsSync2, readFileSync as readFileSync3, realpathSync, renameSync as renameSync2, statSync as statSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync4, unlinkSync as unlinkSync2 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import path3 from "node:path";
+
+// src/rcfile.ts
+import { constants, copyFileSync, existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync as readFileSync3, realpathSync, renameSync as renameSync2, statSync as statSync2, writeFileSync as writeFileSync3 } from "node:fs";
+function replaceFile(file, content, now) {
+  let target = file;
+  try {
+    target = realpathSync(file);
+  } catch {
+  }
+  const mode = statSync2(target).mode & 511;
+  const stamp = now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
+  let bak = `${file}.mokkan-bak-${stamp}`;
+  for (let n = 1; existsSync2(bak); n++) bak = `${file}.mokkan-bak-${stamp}-${n}`;
+  copyFileSync(file, bak, constants.COPYFILE_EXCL);
+  const tmp = `${target}.${process.pid}.tmp`;
+  writeFileSync3(tmp, content, { mode });
+  renameSync2(tmp, target);
+  return bak;
+}
+function linesOf(text) {
+  return text === "" ? [] : text.replace(/\n$/, "").split("\n");
+}
+function findBlock(lines, begin, end, file) {
+  const trimmed = lines.map((l) => l.trimEnd());
+  const start = trimmed.indexOf(begin);
+  const stop = trimmed.indexOf(end);
+  if (start === -1 && stop === -1) return null;
+  if (start === -1 || stop === -1 || stop < start) {
+    throw new UserError(`${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`);
+  }
+  return { start, end: stop };
+}
+function removeBlockText(text, begin, end) {
+  const lines = linesOf(text);
+  let block;
+  try {
+    block = findBlock(lines, begin, end, "");
+  } catch {
+    return { status: "incomplete", text };
+  }
+  if (block === null) return { status: "absent", text };
+  const { start } = block;
+  const next = [...lines.slice(0, start), ...lines.slice(block.end + 1)];
+  if (start > 0 && next[start - 1]?.trim() === "" && (start === next.length || next[start]?.trim() === "")) next.splice(start - 1, 1);
+  return { status: "removed", text: next.length > 0 ? `${next.join("\n")}
+` : "" };
+}
+
+// src/statusline-remove.ts
 function statuslineCommand(io, args) {
   if (!args.includes("--remove")) {
     if (io.isTTY) io.stdout("mokkan 0.3.0 has no status line. `mokkan statusline --remove` takes an earlier version's out of settings.json and ~/.tmux.conf.\n");
@@ -2675,33 +2724,17 @@ function tmuxConfPath(env) {
   const classic = path3.join(home(env), ".tmux.conf");
   const xdgBase = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME !== "" ? env.XDG_CONFIG_HOME : path3.join(home(env), ".config");
   const xdg = path3.join(xdgBase, "tmux", "tmux.conf");
-  return !existsSync2(classic) && existsSync2(xdg) ? xdg : classic;
+  return !existsSync3(classic) && existsSync3(xdg) ? xdg : classic;
 }
 function stableCliPath(env) {
   const base = env.XDG_DATA_HOME && env.XDG_DATA_HOME !== "" ? env.XDG_DATA_HOME : path3.join(home(env), ".local", "share");
   return path3.join(base, "mokkan", "mokkan.mjs");
 }
-function replaceFile(file, content, now) {
-  let target = file;
-  try {
-    target = realpathSync(file);
-  } catch {
-  }
-  const mode = statSync2(target).mode & 511;
-  const stamp = now.toISOString().replace(/\.\d+Z$/, "Z").replace(/[-:]/g, "");
-  let bak = `${file}.mokkan-bak-${stamp}`;
-  for (let n = 1; existsSync2(bak); n++) bak = `${file}.mokkan-bak-${stamp}-${n}`;
-  copyFileSync(file, bak, constants.COPYFILE_EXCL);
-  const tmp = `${target}.${process.pid}.tmp`;
-  writeFileSync3(tmp, content, { mode });
-  renameSync2(tmp, target);
-  return bak;
-}
 var isMokkanCommand = (command) => /(^|[\s/])(mokkan|mokkan\.mjs|cli\.m?js)\s+statusline(\s|$)/.test(command) && command.includes("mokkan");
 function removeClaude(env, now, dryRun) {
   const file = claudeSettingsPath(env);
-  if (!existsSync2(file)) return [];
-  const text = readFileSync3(file, "utf8");
+  if (!existsSync3(file)) return [];
+  const text = readFileSync4(file, "utf8");
   let settings;
   try {
     settings = JSON.parse(text);
@@ -2723,24 +2756,17 @@ function removeClaude(env, now, dryRun) {
 }
 function removeTmux(env, now, dryRun) {
   const file = tmuxConfPath(env);
-  if (!existsSync2(file)) return [];
-  const text = readFileSync3(file, "utf8");
-  const lines = text.replace(/\n$/, "").split("\n");
-  const trimmed = lines.map((l) => l.trimEnd());
-  const start = trimmed.indexOf(TMUX_BEGIN);
-  const end = trimmed.indexOf(TMUX_END);
-  if (start === -1 && end === -1) return [`tmux: no mokkan block in ${file}; nothing to remove.`];
-  if (start === -1 || end === -1 || end < start) return [`tmux: ${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`];
-  const next = [...lines.slice(0, start), ...lines.slice(end + 1)];
-  if (start > 0 && next[start - 1]?.trim() === "" && (start === next.length || next[start]?.trim() === "")) next.splice(start - 1, 1);
+  if (!existsSync3(file)) return [];
+  const r = removeBlockText(readFileSync4(file, "utf8"), TMUX_BEGIN, TMUX_END);
+  if (r.status === "absent") return [`tmux: no mokkan block in ${file}; nothing to remove.`];
+  if (r.status === "incomplete") return [`tmux: ${file} has an incomplete mokkan block; fix it by hand (nothing was changed).`];
   if (dryRun) return [`tmux: would remove the mokkan block from ${file}.`];
-  const bak = replaceFile(file, next.length > 0 ? `${next.join("\n")}
-` : "", now);
+  const bak = replaceFile(file, r.text, now);
   return [`tmux: removed the mokkan block from ${file} (backup: ${bak}). Reload with: tmux source-file ${file}`];
 }
 function removeStableCopy(env, dryRun) {
   const stable = stableCliPath(env);
-  if (!existsSync2(stable)) return [];
+  if (!existsSync3(stable)) return [];
   if (dryRun) return [`CLI: would remove the copy at ${stable}.`];
   try {
     unlinkSync2(stable);
