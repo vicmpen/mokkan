@@ -36,9 +36,9 @@
 - [x] Tests: `test/notify-config.test.ts`, `test/notify-state.test.ts` (including stale-lock recovery and `MOKKAN_NOTIFY=0`); extend the logout and delete-account tests.
 
 ### Task 2: Sanitizer and display format
-- [ ] `src/notify/sanitize.ts`: strip ESC, BEL, C0/C1 and bidi overrides; clamp length; `forOsc()` also drops `;`; `escapeMarkup()` for `&<>`.
-- [ ] `formatDueLocal(due, now)`: `HH:MM` today, `ddd HH:MM` within a week, otherwise a date. It never yields a relative time, so `shell.txt` is stable between polls.
-- [ ] Tests: the hostile text fixture, wide characters, length clamping, time format around midnight and across a week.
+- [x] `src/notify/sanitize.ts`: strip ESC, BEL, C0/C1 and bidi overrides; clamp length; `forOsc()` also drops `;`; `escapeMarkup()` for `&<>`.
+- [x] `formatDueLocal(due, now)`: `HH:MM` today, `ddd HH:MM` within a week, otherwise a date. It never yields a relative time, so `shell.txt` is stable between polls.
+- [x] Tests: the hostile text fixture, wide characters, length clamping, time format around midnight and across a week.
 
 ### Task 3: Detection and desktop backends
 - [ ] `src/notify/detect.ts`: a pure function of `(env, platform, Probe)`, where `Probe` wraps `which`, `launchctl print gui/$UID`, `systemctl --user is-system-running`, the notification-service owner check (`busctl --user status org.freedesktop.Notifications`, else `gdbus … NameHasOwner`) and `loginctl list-sessions`.
