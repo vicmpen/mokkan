@@ -3986,7 +3986,7 @@ function shellFromEnv(env) {
   const base = path16.basename(env.SHELL ?? "").replace(/^-/, "");
   return base === "" ? null : shellByName(base);
 }
-function ensureInitScripts(env, opts, shells = SHELLS) {
+function ensureInitScripts(env, opts, shells = SHELLS, keepBaked) {
   const rewritten = [];
   for (const shell of shells) {
     let current;
@@ -3995,7 +3995,10 @@ function ensureInitScripts(env, opts, shells = SHELLS) {
     } catch {
       continue;
     }
-    const next = shell.snippet(opts);
+    let paths2 = { node: opts.node, cli: opts.cli };
+    if (keepBaked !== void 0) paths2 = keepBaked(shell.name, current);
+    if (paths2 === null) continue;
+    const next = shell.snippet({ ...opts, ...paths2 });
     if (current === next) continue;
     writeStateFile(env, path16.basename(shell.initFile(env)), next);
     rewritten.push(shell.name);
@@ -4068,7 +4071,7 @@ function regenerateInitScripts(deps, config) {
   const { node, cli, version } = deps;
   if (node === void 0 || cli === void 0 || version === void 0) return;
   try {
-    ensureInitScripts(deps.env, { node, cli, version, interval: config.interval, osc: config.osc });
+    ensureInitScripts(deps.env, { node, cli, version, interval: config.interval, osc: config.osc }, void 0, deps.keepBaked);
   } catch (err) {
     appendHookLogHourly(deps.env, "notify", "init", message(err));
   }
@@ -4811,8 +4814,12 @@ async function notifyPollCommand(io, flags, makeClient2) {
       spawn,
       platform: ne.platform,
       which: makeProbe(spawn, env, ne.uid).which,
-      // A copy in the plugin cache must not bake its own path into the init scripts.
-      ...isUnstableCliPath(ne.cli) ? {} : { node: ne.node, cli: ne.cli, version: VERSION }
+      // Regeneration keeps the paths setup baked in: an agent's PATH lacks the stable node, and a copy in the plugin
+      // cache must not bake in its own path.
+      node: ne.node,
+      cli: ne.cli,
+      version: VERSION,
+      keepBaked: bakedPathsOf
     };
     if (flags.loop !== true) {
       const client = loadClient();
@@ -4852,7 +4859,7 @@ async function shellCommand(ctx, args) {
   const ne = resolveNotifyEnv(io);
   if (isUnstableCliPath(ne.cli)) io.stderr(`Warning: ${ne.cli} changes with every update; install mokkan with npm i -g @vicmpen/mokkan-cli first.
 `);
-  io.stdout(shell.snippet(snippetOptions(ne, loadNotifyConfig(io.env).config)));
+  io.stdout(shell.snippet(snippetOptions(ne, fileConfig(io.env).config)));
   return 0;
 }
 async function notifyCommand(ctx, args) {

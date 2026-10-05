@@ -30,12 +30,21 @@ export function shellFromEnv(env: NodeJS.ProcessEnv): NotifyShell | null {
  * generate now: a new CLI version, interval or osc mode. Shells never set up are left alone. Returns the shells
  * whose file was rewritten.
  */
-export function ensureInitScripts(env: NodeJS.ProcessEnv, opts: SnippetOptions, shells: readonly NotifyShell[] = SHELLS): ShellName[] {
+/** Reads the node and cli paths baked into an existing init script, or null when they cannot be read back. */
+export type BakedPathsReader = (shell: ShellName, script: string) => { node: string; cli: string } | null;
+
+export function ensureInitScripts(
+  env: NodeJS.ProcessEnv, opts: SnippetOptions, shells: readonly NotifyShell[] = SHELLS, keepBaked?: BakedPathsReader,
+): ShellName[] {
   const rewritten: ShellName[] = [];
   for (const shell of shells) {
     let current: string;
     try { current = readFileSync(shell.initFile(env), 'utf8'); } catch { continue; }
-    const next = shell.snippet(opts);
+    let paths: { node: string; cli: string } | null = { node: opts.node, cli: opts.cli };
+    if (keepBaked !== undefined) paths = keepBaked(shell.name, current);
+    // Without readable baked paths there is nothing safe to keep: leave the file for `mokkan notify setup`.
+    if (paths === null) continue;
+    const next = shell.snippet({ ...opts, ...paths });
     if (current === next) continue;
     writeStateFile(env, path.basename(shell.initFile(env)), next);
     rewritten.push(shell.name);

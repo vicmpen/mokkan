@@ -12,7 +12,7 @@ import { loadNotifyConfig, type NotifyConfig } from './config.js';
 import { osOf } from './detect.js';
 import { formatDueLocal, formatNotifyLine } from './format.js';
 import { forOsc, sanitizeText } from './sanitize.js';
-import { ensureInitScripts } from './shells/index.js';
+import { ensureInitScripts, type BakedPathsReader } from './shells/index.js';
 import {
   pruneNotified, readNotified, readStamp, tryLockPoll, writeNotified, writeShellFiles, writeStamp, writeStateFile,
   type NotifiedState,
@@ -55,6 +55,12 @@ export interface PollDeps {
   node?: string;
   cli?: string;
   version?: string;
+  /**
+   * When set, regeneration keeps the node and cli paths each init script already has, and only `node`/`cli` above
+   * are ignored. Only `mokkan notify setup` chooses those paths: an agent's poll runs with launchd's or systemd's
+   * PATH, where the stable node is not found, and would otherwise bake in a versioned path that an upgrade removes.
+   */
+  keepBaked?: BakedPathsReader;
 }
 
 export type PollStatus = 'skipped-disabled' | 'skipped-locked' | 'skipped-fresh' | 'ok' | 'error';
@@ -151,7 +157,7 @@ function regenerateInitScripts(deps: PollDeps, config: NotifyConfig): void {
   const { node, cli, version } = deps;
   if (node === undefined || cli === undefined || version === undefined) return;
   try {
-    ensureInitScripts(deps.env, { node, cli, version, interval: config.interval, osc: config.osc });
+    ensureInitScripts(deps.env, { node, cli, version, interval: config.interval, osc: config.osc }, undefined, deps.keepBaked);
   } catch (err) {
     appendHookLogHourly(deps.env, 'notify', 'init', message(err));
   }

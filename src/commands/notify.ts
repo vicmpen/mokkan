@@ -781,8 +781,9 @@ export async function notifyPollCommand(
     const deps: PollDeps = {
       env, now: io.now, client: null, spawn, platform: ne.platform,
       which: makeProbe(spawn, env, ne.uid).which,
-      // A copy in the plugin cache must not bake its own path into the init scripts.
-      ...(isUnstableCliPath(ne.cli) ? {} : { node: ne.node, cli: ne.cli, version: VERSION }),
+      // Regeneration keeps the paths setup baked in: an agent's PATH lacks the stable node, and a copy in the plugin
+      // cache must not bake in its own path.
+      node: ne.node, cli: ne.cli, version: VERSION, keepBaked: bakedPathsOf,
     };
     if (flags.loop !== true) {
       const client = loadClient();
@@ -818,7 +819,7 @@ export async function shellCommand(ctx: NotifyCtx, args: string[]): Promise<numb
   if (shell === null) throw new UserError(SHELL_USAGE);
   const ne = resolveNotifyEnv(io);
   if (isUnstableCliPath(ne.cli)) io.stderr(`Warning: ${ne.cli} changes with every update; install mokkan with npm i -g @vicmpen/mokkan-cli first.\n`);
-  io.stdout(shell.snippet(snippetOptions(ne, loadNotifyConfig(io.env).config)));
+  io.stdout(shell.snippet(snippetOptions(ne, fileConfig(io.env).config)));
   return 0;
 }
 
