@@ -41,9 +41,9 @@
 - [x] Tests: the hostile text fixture, wide characters, length clamping, time format around midnight and across a week.
 
 ### Task 3: Detection and desktop backends
-- [ ] `src/notify/detect.ts`: a pure function of `(env, platform, Probe)`, where `Probe` wraps `which`, `launchctl print gui/$UID`, `systemctl --user is-system-running`, the notification-service owner check (`busctl --user status org.freedesktop.Notifications`, else `gdbus … NameHasOwner`) and `loginctl list-sessions`.
-- [ ] Backends: `macos-terminal-notifier`, `macos-osascript` (`on run argv`), `linux-notify-send` (`--app-name=mokkan --`, markup escaped), `linux-gdbus` (`org.freedesktop.Notifications.Notify`, markup escaped), `linux-kdialog`. Each lives in its own file and is registered in order in `index.ts`.
-- [ ] Tests: a detection table where each case pins `gui`, `agent` and `backend`:
+- [x] `src/notify/detect.ts`: a pure function of `(env, platform, Probe)`, where `Probe` wraps `which`, `launchctl print gui/$UID`, `systemctl --user is-system-running`, the notification-service owner check (`busctl --user status org.freedesktop.Notifications`, else `gdbus … NameHasOwner`) and `loginctl list-sessions`.
+- [x] Backends: `macos-terminal-notifier`, `macos-osascript` (`on run argv`), `linux-notify-send` (`--app-name=mokkan --`, markup escaped), `linux-gdbus` (`org.freedesktop.Notifications.Notify`, markup escaped), `linux-kdialog`. Each lives in its own file and is registered in order in `index.ts`.
+- [x] Tests: a detection table where each case pins `gui`, `agent` and `backend`:
   - GNOME Wayland → systemd-user + notify-send;
   - KDE X11 → systemd-user + notify-send;
   - sway with no libnotify → gdbus;
@@ -53,7 +53,7 @@
   - macOS console → launchd;
   - macOS over SSH with nobody logged in at the console → none;
   - WSL → none, shell + OSC.
-- [ ] `test/notify-contract.test.ts`, backend part.
+- [x] `test/notify-contract.test.ts`, backend part.
 
 ### Task 4: Poll
 - [ ] `src/notify/poll.ts`: steps 1 to 8 from the spec, with the backend list injected (from Task 3's registry in production).

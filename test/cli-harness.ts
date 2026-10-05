@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { main, type CliIO, type TerminalIO } from '../src/cli.js';
 import { saveCredentials, type Credentials } from '../src/credentials.js';
+import type { Spawner } from '../src/spawn.js';
 import type { Reminder } from '../src/types.js';
 
 export const NOW = new Date('2026-09-28T12:00:00.000Z');
@@ -18,7 +19,12 @@ export interface RunOptions {
   /** Receives every URL the CLI asks to open; the real opener is never used in tests. */
   opened?: string[];
   tty?: TerminalIO;
+  /** Replaces process spawning; the default answers every command as not installed, so tests never start one. */
+  spawn?: Spawner;
 }
+
+/** A Spawner for which every command is missing (`ENOENT`). */
+export const missingSpawner: Spawner = async () => ({ code: null, stdout: '', stderr: '', error: 'ENOENT' });
 
 export interface RunResult { code: number; stdout: string; stderr: string }
 
@@ -67,6 +73,7 @@ export class CliHarness {
       sleep: async () => undefined,
       openUrl: (url) => { opts.opened?.push(url); return true; },
       tty: opts.tty,
+      spawn: opts.spawn ?? missingSpawner,
     };
     const code = await main(argv, io);
     return { code, stdout, stderr };

@@ -2750,6 +2750,39 @@ function removeStableCopy(env, dryRun) {
   }
 }
 
+// src/spawn.ts
+import { execFile } from "node:child_process";
+var DEFAULT_SPAWN_TIMEOUT_MS = 5e3;
+var MAX_OUTPUT = 1024 * 1024;
+var execFileSpawner = (file, args, opts = {}) => new Promise((resolve) => {
+  try {
+    const child = execFile(file, args, {
+      encoding: "utf8",
+      env: opts.env ?? process.env,
+      timeout: opts.timeoutMs ?? DEFAULT_SPAWN_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      maxBuffer: MAX_OUTPUT,
+      windowsHide: true,
+      shell: false
+    }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({ code: 0, stdout, stderr });
+        return;
+      }
+      const e = err;
+      if (typeof e.code === "number") resolve({ code: e.code, stdout, stderr });
+      else if (typeof e.code === "string") resolve({ code: null, stdout, stderr, error: e.code });
+      else if (e.killed) resolve({ code: null, stdout, stderr, error: "timeout" });
+      else if (e.signal) resolve({ code: null, stdout, stderr, error: `signal ${e.signal}` });
+      else resolve({ code: null, stdout, stderr, error: e.message });
+    });
+    child.stdin?.on("error", () => void 0);
+    child.stdin?.end();
+  } catch (err) {
+    resolve({ code: null, stdout: "", stderr: "", error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // src/cli.ts
 var BOOLEAN_FLAGS = /* @__PURE__ */ new Set(["json", "all", "once", "start", "complete", "help", "exit-zero"]);
 var VALUE_FLAGS = /* @__PURE__ */ new Set(["otp", "source", "interval"]);
@@ -2896,6 +2929,7 @@ function defaultIO() {
     now: () => /* @__PURE__ */ new Date(),
     sleep,
     openUrl: openUrlDetached,
+    spawn: execFileSpawner,
     tty: defaultTerminal()
   };
 }

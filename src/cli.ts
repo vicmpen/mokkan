@@ -21,6 +21,7 @@ import { watchCommand } from './watcher.js';
 import { statuslineCommand } from './statusline-remove.js';
 import { acceptCommand, askToAccept, deleteAccountCommand, privacyCommand } from './commands/privacy.js';
 import { EXIT_PRIVACY_REQUIRED, isPrivacyRequired, isPrivacyStale } from './privacy.js';
+import { execFileSpawner, type Spawner } from './spawn.js';
 
 export { EXIT_PRIVACY_REQUIRED };
 
@@ -48,6 +49,11 @@ export interface CliIO {
    * browser ever starts).
    */
   openUrl?: (url: string) => boolean;
+  /**
+   * Runs a helper process (notifiers, launchctl, systemctl, busctl) with an argv array, never a shell. Tests replace
+   * it so no real process starts; absent means nothing can be run.
+   */
+  spawn?: Spawner;
   /** The terminal for `mokkan ui` (defaultIO wires process.stdin/stdout; tests pass a FakeTerminal). */
   tty?: TerminalIO;
 }
@@ -218,6 +224,7 @@ export function defaultIO(): CliIO {
     now: () => new Date(),
     sleep,
     openUrl: openUrlDetached,
+    spawn: execFileSpawner,
     tty: defaultTerminal(),
   };
 }

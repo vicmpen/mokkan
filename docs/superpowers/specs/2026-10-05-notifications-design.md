@@ -246,7 +246,10 @@ These could not be checked without the hardware; Task 4 and the manual matrix co
 - How macOS 14/15 treats `osascript display notification` started by launchd, and whether `terminal-notifier` still
   works on Sequoia.
 - Whether `launchctl print gui/$UID` fails over SSH when nobody is logged in at the console.
-- How `gdbus call` parses string arguments that look quoted (`'x'`).
+- ~~How `gdbus call` parses string arguments that look quoted (`'x'`)~~: verified in Task 3 (typed GVariant literals,
+  run against a fake notification service under `dbus-run-session`).
+- osascript: `item -1`/`item -2 of argv` and whether `--` reaches the script (the backend works either way).
+- terminal-notifier: the U+2060 prefix that keeps a message starting with `-`, `[`, `{`, `\` … literal.
 
 ## Out of scope
 
