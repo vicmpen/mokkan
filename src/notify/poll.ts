@@ -26,6 +26,8 @@ export const NOTIFIER_TIMEOUT_MS = 3_000;
 /** A desktop notification that failed this many times is given up. */
 export const MAX_NOTIFY_ATTEMPTS = 3;
 /** More new reminders than this become one summary notification. */
+/** Lines in shell.txt; more reminders become one "… and N more" line. */
+export const MAX_SHELL_LINES = 20;
 export const MAX_SINGLE_NOTIFICATIONS = 3;
 
 /** The shell line shown while the privacy policy is not accepted. */
@@ -61,6 +63,11 @@ export interface PollDeps {
    * PATH, where the stable node is not found, and would otherwise bake in a versioned path that an upgrade removes.
    */
   keepBaked?: BakedPathsReader;
+  /**
+   * Checked after `pending` answers: false means the user logged out (or the session expired) while the request was
+   * in flight, so the reminder text that `logout` just removed is not written back.
+   */
+  loggedIn?: () => boolean;
 }
 
 export type PollStatus = 'skipped-disabled' | 'skipped-locked' | 'skipped-fresh' | 'ok' | 'error';
@@ -204,11 +211,21 @@ async function pollWork(deps: PollDeps, config: NotifyConfig, now: Date, live: (
     return outcome('error', { error: message(err) });
   }
   if (!live()) return outcome('error', { error: 'timed out' });
+  if (deps.loggedIn !== undefined && !deps.loggedIn()) {
+    writeShellFiles(env, '', '');
+    writeNotified(env, {});
+    return outcome('error', { error: 'logged out during the poll' });
+  }
 
   const due = notifiable(pending, now);
   if (config.shell) {
-    const shell = due.map((r) => `${formatNotifyLine(r, now, deps.timeZone)}\n`).join('');
-    const osc = config.osc === 'off' ? '' : due.map((r) => `${forOsc(r.text)}\n`).join('');
+    // Capped: the prompt hook reads the whole file on every prompt, and bash's `read -d ''` is slow on big files.
+    const lines = due.slice(0, MAX_SHELL_LINES).map((r) => `${formatNotifyLine(r, now, deps.timeZone)}\n`);
+    if (due.length > MAX_SHELL_LINES) lines.push(`- … and ${due.length - MAX_SHELL_LINES} more: mokkan list --all\n`);
+    const shell = lines.join('');
+    const osc = config.osc === 'off' ? ''
+      : due.length > MAX_SINGLE_NOTIFICATIONS ? `${due.length} reminders due\n`
+      : due.map((r) => `${forOsc(r.text)}\n`).join('');
     writeShellFiles(env, shell, osc);
   } else {
     writeShellFiles(env, '', '');

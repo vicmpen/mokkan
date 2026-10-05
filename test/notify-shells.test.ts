@@ -158,6 +158,19 @@ for (const { shell, bin, label } of BINARIES) {
       expect(r.err).toBe('');
     });
 
+    it('survives errexit (set -e / setopt err_exit err_return), also with a stamp lacking its newline', () => {
+      setShell(SET);
+      const errexit = shell.name === 'bash' ? ['set -e'] : shell.name === 'zsh' ? ['setopt err_exit err_return'] : [];
+      // A fresh stamp, so no background poll rewrites the files mid-session; once without its trailing newline.
+      const now = Math.floor(Date.now() / 1000);
+      for (const stamp of [`${now}\n`, `${now}`]) {
+        writeFileSync(path.join(state, 'stamp'), stamp);
+        const r = session([...errexit, SRC, 'echo A', 'echo B']);
+        expect(r.out).toBe(`mokkan:\n${SET}A\nB\n`);
+        expect(r.err).toBe('');
+      }
+    });
+
     it('sourcing the init file twice still prints once', () => {
       setShell(SET);
       const r = session([SRC, SRC, 'echo A']);

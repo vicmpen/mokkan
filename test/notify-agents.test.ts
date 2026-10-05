@@ -63,17 +63,25 @@ WantedBy=timers.target
 `;
 
 describe('launchd render', () => {
-  it('writes the plist with every string XML-escaped, without EnvironmentVariables when XDG_CONFIG_HOME was unset', () => {
-    expect(launchdAgent.render(ctx())).toEqual([
-      { path: '/home/u/Library/LaunchAgents/dev.mokkan.notify.plist', content: PLIST_HEAD + PLIST_TAIL },
-    ]);
+  it('writes the plist with every string XML-escaped, and a PATH where Homebrew\'s terminal-notifier is found', () => {
+    expect(launchdAgent.render(ctx())).toEqual([{
+      path: '/home/u/Library/LaunchAgents/dev.mokkan.notify.plist',
+      content: `${PLIST_HEAD}  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+${PLIST_TAIL}`,
+    }]);
   });
 
-  it('passes XDG_CONFIG_HOME, and only that, when it was set', () => {
+  it('also passes XDG_CONFIG_HOME when it was set', () => {
     const [file] = launchdAgent.render(ctx(XDG));
     expect(file.path).toBe('/home/u/Library/LaunchAgents/dev.mokkan.notify.plist');
     expect(file.content).toBe(`${PLIST_HEAD}  <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>XDG_CONFIG_HOME</key>
     <string>/home/u/my cfg%$&quot;</string>
   </dict>

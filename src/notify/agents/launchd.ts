@@ -5,6 +5,13 @@ import {
 import type { AgentContext, AgentFile, AgentResult, NotifyAgent } from './types.js';
 
 export const LAUNCHD_LABEL = 'dev.mokkan.notify';
+
+/**
+ * launchd starts agents with PATH=/usr/bin:/bin:/usr/sbin:/sbin, where Homebrew's terminal-notifier is not found, so
+ * the agent's polls would use osascript although setup tested terminal-notifier. Fixed, so `status` run from any
+ * shell renders the same plist.
+ */
+export const LAUNCHD_PATH = '/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 const MARKER = `<!-- ${MARKER_TEXT} -->`;
 
 const XML_ENTITIES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
@@ -34,10 +41,9 @@ function render(ctx: AgentContext): AgentFile[] {
     ...[ctx.node, ctx.cli, 'notify', 'poll'].map((a) => `    ${str(a)}`),
     '  </array>',
   ];
-  if (ctx.xdgConfigHome !== undefined) {
-    lines.push('  <key>EnvironmentVariables</key>', '  <dict>', '    <key>XDG_CONFIG_HOME</key>',
-      `    ${str(ctx.xdgConfigHome)}`, '  </dict>');
-  }
+  lines.push('  <key>EnvironmentVariables</key>', '  <dict>', '    <key>PATH</key>', `    ${str(LAUNCHD_PATH)}`);
+  if (ctx.xdgConfigHome !== undefined) lines.push('    <key>XDG_CONFIG_HOME</key>', `    ${str(ctx.xdgConfigHome)}`);
+  lines.push('  </dict>');
   lines.push(
     '  <key>StartInterval</key>',
     `  <integer>${ctx.interval}</integer>`,

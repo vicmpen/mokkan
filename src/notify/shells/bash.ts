@@ -61,13 +61,15 @@ export const bash: NotifyShell = {
       '__mokkan_show() {',
       '  [[ ${MOKKAN_NOTIFY-} == 0 ]] && return 0',
       '  local last= cur= line= now=${EPOCHSECONDS:-$(date +%s)}',
-      '  [[ -r $__mokkan_dir/stamp ]] && read -r last <"$__mokkan_dir/stamp"',
+      // `|| :`: read returns 1 at end of file without a newline (always, for -d ''), which would end a shell that has
+      // `set -e`, since the hook runs from PROMPT_COMMAND.
+      '  [[ -r $__mokkan_dir/stamp ]] && { read -r last <"$__mokkan_dir/stamp" || :; }',
       '  case $last in \'\'|*[!0-9]*) last=0 ;; esac',
       '  (( ${#last} > 15 )) && last=0',
       `  if (( now - 10#$last >= ${opts.interval} )); then`,
       `    ( ${shQuote(opts.node)} ${shQuote(opts.cli)} notify poll </dev/null >/dev/null 2>&1 & ) 2>/dev/null`,
       '  fi',
-      "  [[ -r $__mokkan_dir/shell.txt ]] && IFS= read -r -d '' cur <\"$__mokkan_dir/shell.txt\"",
+      "  [[ -r $__mokkan_dir/shell.txt ]] && { IFS= read -r -d '' cur <\"$__mokkan_dir/shell.txt\" || :; }",
       '  cur=${cur%"$__mokkan_nl"}',
       '  [[ $cur == "$__mokkan_shown" ]] && return 0',
       '  __mokkan_shown=$cur',

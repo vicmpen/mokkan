@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname as osHostname } from 'node:os';
 import path from 'node:path';
-import { CredentialsCorruptError, CredentialsPermissionError, loadCredentials, notifyStateDir, removeNotifyState, type Credentials } from '../credentials.js';
+import { CredentialsCorruptError, CredentialsPermissionError, credentialsPath, loadCredentials, notifyStateDir, removeNotifyState, type Credentials } from '../credentials.js';
 import { UserError } from '../errors.js';
 import { appendHookLogHourly, safeAppendHookLog } from '../hooks.js';
 import type { Spawner } from '../spawn.js';
@@ -784,6 +784,7 @@ export async function notifyPollCommand(
       // Regeneration keeps the paths setup baked in: an agent's PATH lacks the stable node, and a copy in the plugin
       // cache must not bake in its own path.
       node: ne.node, cli: ne.cli, version: VERSION, keepBaked: bakedPathsOf,
+      loggedIn: () => existsSync(credentialsPath(env)),
     };
     if (flags.loop !== true) {
       const client = loadClient();

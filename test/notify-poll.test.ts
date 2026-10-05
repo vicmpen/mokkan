@@ -276,6 +276,28 @@ describe('pollOnce', () => {
     expect(oscFile()).not.toContain(';');
   });
 
+  it('caps shell.txt at 20 lines plus a count, and OSC at 3 lines, then one summary', async () => {
+    setConfig({ osc: '9', desktop: false });
+    for (let n = 1; n <= 25; n++) add(n, `r${n}`, `2026-09-28T11:${String(n).padStart(2, '0')}:00.000Z`);
+    await pollOnce(deps());
+    const lines = readShellFile(env).trimEnd().split('\n');
+    expect(lines).toHaveLength(21);
+    expect(lines[19]).toContain('r20');
+    expect(lines[20]).toBe('- … and 5 more: mokkan list --all');
+    expect(oscFile()).toBe('25 reminders due\n');
+  });
+
+  it('writes no reminder text when the user logged out while pending was in flight', async () => {
+    add(1, 'secret', '2026-09-28T11:00:00.000Z');
+    writeShellFiles(env, 'old\n', 'old\n');
+    const { spawn, calls } = fakeSpawner();
+    const outcome = await pollOnce(deps({ spawn, loggedIn: () => false }));
+    expect(outcome.status).toBe('error');
+    expect(readShellFile(env)).toBe('');
+    expect(oscFile()).toBe('');
+    expect(calls).toHaveLength(0);
+  });
+
   it('desktop off: no spawn, shell files still written', async () => {
     setConfig({ desktop: false });
     add(1, 'x', '2026-09-28T11:00:00.000Z');

@@ -2984,6 +2984,7 @@ function commandFailure(what, r) {
 
 // src/notify/agents/launchd.ts
 var LAUNCHD_LABEL = "dev.mokkan.notify";
+var LAUNCHD_PATH = "/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 var MARKER = `<!-- ${MARKER_TEXT} -->`;
 var XML_ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" };
 function xmlEscape(text) {
@@ -3008,15 +3009,9 @@ function render2(ctx) {
     ...[ctx.node, ctx.cli, "notify", "poll"].map((a) => `    ${str(a)}`),
     "  </array>"
   ];
-  if (ctx.xdgConfigHome !== void 0) {
-    lines.push(
-      "  <key>EnvironmentVariables</key>",
-      "  <dict>",
-      "    <key>XDG_CONFIG_HOME</key>",
-      `    ${str(ctx.xdgConfigHome)}`,
-      "  </dict>"
-    );
-  }
+  lines.push("  <key>EnvironmentVariables</key>", "  <dict>", "    <key>PATH</key>", `    ${str(LAUNCHD_PATH)}`);
+  if (ctx.xdgConfigHome !== void 0) lines.push("    <key>XDG_CONFIG_HOME</key>", `    ${str(ctx.xdgConfigHome)}`);
+  lines.push("  </dict>");
   lines.push(
     "  <key>StartInterval</key>",
     `  <integer>${ctx.interval}</integer>`,
@@ -3794,13 +3789,15 @@ var bash = {
       "__mokkan_show() {",
       "  [[ ${MOKKAN_NOTIFY-} == 0 ]] && return 0",
       "  local last= cur= line= now=${EPOCHSECONDS:-$(date +%s)}",
-      '  [[ -r $__mokkan_dir/stamp ]] && read -r last <"$__mokkan_dir/stamp"',
+      // `|| :`: read returns 1 at end of file without a newline (always, for -d ''), which would end a shell that has
+      // `set -e`, since the hook runs from PROMPT_COMMAND.
+      '  [[ -r $__mokkan_dir/stamp ]] && { read -r last <"$__mokkan_dir/stamp" || :; }',
       "  case $last in ''|*[!0-9]*) last=0 ;; esac",
       "  (( ${#last} > 15 )) && last=0",
       `  if (( now - 10#$last >= ${opts.interval} )); then`,
       `    ( ${shQuote(opts.node)} ${shQuote(opts.cli)} notify poll </dev/null >/dev/null 2>&1 & ) 2>/dev/null`,
       "  fi",
-      `  [[ -r $__mokkan_dir/shell.txt ]] && IFS= read -r -d '' cur <"$__mokkan_dir/shell.txt"`,
+      `  [[ -r $__mokkan_dir/shell.txt ]] && { IFS= read -r -d '' cur <"$__mokkan_dir/shell.txt" || :; }`,
       '  cur=${cur%"$__mokkan_nl"}',
       '  [[ $cur == "$__mokkan_shown" ]] && return 0',
       "  __mokkan_shown=$cur",
@@ -4011,6 +4008,7 @@ var LAST_FILE = "last.json";
 var POLL_TIMEOUT_MS = 1e4;
 var NOTIFIER_TIMEOUT_MS = 3e3;
 var MAX_NOTIFY_ATTEMPTS = 3;
+var MAX_SHELL_LINES = 20;
 var MAX_SINGLE_NOTIFICATIONS = 3;
 var PRIVACY_LINE = "privacy policy updated: run mokkan accept in a terminal\n";
 function notifiable(pending, now) {
@@ -4113,11 +4111,20 @@ async function pollWork(deps, config, now, live) {
     return outcome("error", { error: message(err) });
   }
   if (!live()) return outcome("error", { error: "timed out" });
+  if (deps.loggedIn !== void 0 && !deps.loggedIn()) {
+    writeShellFiles(env, "", "");
+    writeNotified(env, {});
+    return outcome("error", { error: "logged out during the poll" });
+  }
   const due = notifiable(pending, now);
   if (config.shell) {
-    const shell = due.map((r) => `${formatNotifyLine(r, now, deps.timeZone)}
-`).join("");
-    const osc = config.osc === "off" ? "" : due.map((r) => `${forOsc(r.text)}
+    const lines = due.slice(0, MAX_SHELL_LINES).map((r) => `${formatNotifyLine(r, now, deps.timeZone)}
+`);
+    if (due.length > MAX_SHELL_LINES) lines.push(`- \u2026 and ${due.length - MAX_SHELL_LINES} more: mokkan list --all
+`);
+    const shell = lines.join("");
+    const osc = config.osc === "off" ? "" : due.length > MAX_SINGLE_NOTIFICATIONS ? `${due.length} reminders due
+` : due.map((r) => `${forOsc(r.text)}
 `).join("");
     writeShellFiles(env, shell, osc);
   } else {
@@ -4819,7 +4826,8 @@ async function notifyPollCommand(io, flags, makeClient2) {
       node: ne.node,
       cli: ne.cli,
       version: VERSION,
-      keepBaked: bakedPathsOf
+      keepBaked: bakedPathsOf,
+      loggedIn: () => existsSync8(credentialsPath(env))
     };
     if (flags.loop !== true) {
       const client = loadClient();

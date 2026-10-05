@@ -248,7 +248,7 @@ The settings are in `~/.config/mokkan/config.json`, created by `setup`, `on` or 
 - `shell`: print reminders at the prompt (default on).
 - `desktop`: native notifications (default off until you say yes in setup).
 - `osc`: `"off"`, `"auto"`, `"9"`, `"777"` or `"99"` (default off).
-- `interval`: seconds between checks, at least 30 (default 60).
+- `interval`: seconds between checks, at least 30 (default 60). Run `mokkan notify setup` again after changing it, so the background agent uses it too.
 
 `mokkan notify off` turns every channel off and `mokkan notify on` turns them on; `mokkan notify off desktop` turns off one. Neither installs or removes anything. `MOKKAN_NOTIFY=0` in the environment turns everything off for that shell or session. If the file can't be read, everything stays off until you fix it, and `mokkan notify status` says why.
 
