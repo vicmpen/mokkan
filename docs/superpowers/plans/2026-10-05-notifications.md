@@ -56,15 +56,15 @@
 - [x] `test/notify-contract.test.ts`, backend part.
 
 ### Task 4: Poll
-- [ ] `src/notify/poll.ts`: steps 1 to 8 from the spec, with the backend list injected (from Task 3's registry in production).
-- [ ] `--loop` mode for xdg-autostart, which exits on SIGTERM.
-- [ ] `notifiable()` unit tests:
+- [x] `src/notify/poll.ts`: steps 1 to 8 from the spec, with the backend list injected (from Task 3's registry in production).
+- [x] `--loop` mode for xdg-autostart, which exits on SIGTERM.
+- [x] `notifiable()` unit tests:
   - a plain push (no `due_at`) is excluded;
   - a scheduled reminder that has not fired is excluded;
   - a fired `due` reminder and a fired `delivered` one (awaiting ack) are included;
   - an acked one is excluded;
   - an id in both sets appears once.
-- [ ] Tests against `test/fake-server.ts`:
+- [x] Tests against `test/fake-server.ts`:
   - a reminder is notified, the second poll does not notify again, and the id is pruned after an ack;
   - more than 3 new reminders become one summary;
   - 10 concurrent polls make 1 request;
