@@ -1,5 +1,5 @@
 import { ApiError, NetworkError } from '../client.js';
-import { clearCredentials, type Credentials } from '../credentials.js';
+import { clearCredentials, removeNotifyState, type Credentials } from '../credentials.js';
 import { UserError } from '../errors.js';
 import { formatPolicy, isPrivacyStale } from '../privacy.js';
 import type { Ctx } from '../cli.js';
@@ -104,6 +104,7 @@ export async function logoutCommand(ctx: Ctx): Promise<number> {
     if (!(err instanceof NetworkError) && !(err instanceof ApiError)) throw err;
   }
   clearCredentials(ctx.io.env);
+  removeNotifyState(ctx.io.env);
   ctx.io.stdout('Logged out.\n');
   return 0;
 }

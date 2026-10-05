@@ -94,9 +94,30 @@ export function clearCredentials(env: NodeJS.ProcessEnv = process.env): void {
   if (existsSync(file)) unlinkSync(file);
 }
 
-/** After the account is deleted: credentials.json, and hook.log with its rotated copies and `.notified` markers. */
+/** `mokkan notify` state: the poll stamp and lock, the reminder text the shells print, the ids already notified. */
+export function notifyStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(configDir(env), 'notify');
+}
+
+/**
+ * Removes the reminder text `mokkan notify` keeps (on logout, session expiry and account deletion). The generated
+ * `init.<shell>` scripts stay: the rc files source them, and they keep polling after the next login.
+ */
+export function removeNotifyState(env: NodeJS.ProcessEnv = process.env): void {
+  const dir = notifyStateDir(env);
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith('init.')) rmSync(path.join(dir, name), { recursive: true, force: true });
+  }
+}
+
+/**
+ * After the account is deleted: credentials.json, hook.log with its rotated copies and `.notified` markers, and the
+ * notify state.
+ */
 export function removeAccountFiles(env: NodeJS.ProcessEnv = process.env): void {
   clearCredentials(env);
+  removeNotifyState(env);
   const dir = configDir(env);
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {

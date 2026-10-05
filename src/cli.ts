@@ -3,8 +3,8 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { ApiError, NetworkError, MokkanClient, PRIVACY_URL, apiErrorHint } from './client.js';
 import {
-  clearCredentials, CredentialsCorruptError, CredentialsLockError, CredentialsPermissionError, loadCredentials, resolveServerUrl,
-  saveCredentials, withCredentialsLock, type Credentials,
+  clearCredentials, CredentialsCorruptError, CredentialsLockError, CredentialsPermissionError, loadCredentials, removeNotifyState,
+  resolveServerUrl, saveCredentials, withCredentialsLock, type Credentials,
 } from './credentials.js';
 import { UserError } from './errors.js';
 import { promptLine, readAllStdin } from './prompt.js';
@@ -257,7 +257,7 @@ function makeClient(creds: Credentials | null, io: CliIO, timeoutMs: number, sig
     onCredentials: (next) => saveCredentials(next, io.env),
     reloadCredentials: () => loadCredentials(io.env),
     lock: (fn, lockSignal) => withCredentialsLock(io.env, fn, { signal: lockSignal }),
-    onSessionExpired: () => clearCredentials(io.env),
+    onSessionExpired: () => { clearCredentials(io.env); removeNotifyState(io.env); },
     fetchImpl: io.fetchImpl,
     now: io.now,
     timeoutMs,
@@ -313,6 +313,7 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
       if (!(err instanceof CredentialsCorruptError) || (command !== 'login' && command !== 'logout')) throw err;
       if (command === 'logout') {
         clearCredentials(io.env);
+        removeNotifyState(io.env);
         io.stdout(`Removed corrupt credentials file ${err.file}.\nLogged out.\n`);
         return 0;
       }

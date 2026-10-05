@@ -30,10 +30,10 @@
 ## Tasks
 
 ### Task 1: Config, state and account cleanup
-- [ ] `src/notify/config.ts`: `loadNotifyConfig(env)` returns defaults merged with the file; `saveNotifyConfig` writes atomically at 0600; `MOKKAN_NOTIFY=0` overrides everything; a corrupt file means everything is off, plus an hourly log line; `interval` below 30 is a usage error on write and clamped on read.
-- [ ] `src/notify/state.ts`: dir 0700; `tryLockPoll` (`O_EXCL`, stale after 30 s), `readStamp` (non-numeric → 0), `writeStamp` (temp + rename), atomic `writeShellFiles`, `notified.json` with per-id `{done, attempts}`, update and prune.
-- [ ] `removeAccountFiles` (`src/credentials.ts:98-105`) also removes `notify/`, so `logout` and `delete-account` clear reminder text.
-- [ ] Tests: `test/notify-config.test.ts`, `test/notify-state.test.ts` (including stale-lock recovery and `MOKKAN_NOTIFY=0`); extend the logout and delete-account tests.
+- [x] `src/notify/config.ts`: `loadNotifyConfig(env)` returns defaults merged with the file; `saveNotifyConfig` writes atomically at 0600; `MOKKAN_NOTIFY=0` overrides everything; a corrupt file means everything is off, plus an hourly log line; `interval` below 30 is a usage error on write and clamped on read.
+- [x] `src/notify/state.ts`: dir 0700; `tryLockPoll` (`O_EXCL`, stale after 30 s), `readStamp` (non-numeric → 0), `writeStamp` (temp + rename), atomic `writeShellFiles`, `notified.json` with per-id `{done, attempts}`, update and prune.
+- [x] `removeNotifyState` (`src/credentials.ts`) removes everything in `notify/` except `init.*`; called by `removeAccountFiles`, `logout` (both paths) and on session expiry. `appendHookLogHourly` in `src/hooks.ts` for recurring problems.
+- [x] Tests: `test/notify-config.test.ts`, `test/notify-state.test.ts` (including stale-lock recovery and `MOKKAN_NOTIFY=0`); extend the logout and delete-account tests.
 
 ### Task 2: Sanitizer and display format
 - [ ] `src/notify/sanitize.ts`: strip ESC, BEL, C0/C1 and bidi overrides; clamp length; `forOsc()` also drops `;`; `escapeMarkup()` for `&<>`.

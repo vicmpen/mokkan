@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { credentialsPath, hookLogPath } from '../src/credentials.js';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { credentialsPath, hookLogPath, notifyStateDir } from '../src/credentials.js';
 import { CliHarness, FakeTerminal } from './cli-harness.js';
 import { FakeServer, PRIVACY_SUMMARY, tokenPair, type FakeAccount, type FakePrivacy } from './fake-server.js';
 
@@ -253,9 +254,12 @@ describe('privacy policy', () => {
       expect(acct.deleted).toBe(false);
     });
 
-    it('deletes the account and removes credentials.json and hook.log*', async () => {
+    it('deletes the account and removes credentials.json, hook.log* and the notify reminder text', async () => {
       h.saveCreds(server.url);
       for (const suffix of ['', '.notified', '.403.notified']) writeFileSync(`${hookLogPath(h.env())}${suffix}`, 'x\n');
+      const notifyDir = notifyStateDir(h.env());
+      mkdirSync(notifyDir, { recursive: true });
+      writeFileSync(path.join(notifyDir, 'shell.txt'), '- [abc] secret\n');
       const res = await h.run(['delete-account'], { serverUrl: server.url, isTTY: true, answers: ['a long password', 'delete'] });
       expect(res).toEqual({
         code: 0, stderr: '',
@@ -264,6 +268,7 @@ describe('privacy policy', () => {
       expect(server.last('DELETE', '/me')?.body).toEqual({ password: 'a long password' });
       for (const suffix of ['', '.notified', '.403.notified']) expect(existsSync(`${hookLogPath(h.env())}${suffix}`)).toBe(false);
       expect(existsSync(credentialsPath(h.env()))).toBe(false);
+      expect(existsSync(path.join(notifyDir, 'shell.txt'))).toBe(false);
     });
   });
 

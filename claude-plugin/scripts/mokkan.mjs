@@ -413,8 +413,19 @@ function clearCredentials(env = process.env) {
   const file = credentialsPath(env);
   if (existsSync(file)) unlinkSync(file);
 }
+function notifyStateDir(env = process.env) {
+  return path.join(configDir(env), "notify");
+}
+function removeNotifyState(env = process.env) {
+  const dir = notifyStateDir(env);
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith("init.")) rmSync(path.join(dir, name), { recursive: true, force: true });
+  }
+}
 function removeAccountFiles(env = process.env) {
   clearCredentials(env);
+  removeNotifyState(env);
   const dir = configDir(env);
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
@@ -606,6 +617,7 @@ async function logoutCommand(ctx) {
     if (!(err instanceof NetworkError) && !(err instanceof ApiError)) throw err;
   }
   clearCredentials(ctx.io.env);
+  removeNotifyState(ctx.io.env);
   ctx.io.stdout("Logged out.\n");
   return 0;
 }
@@ -2920,7 +2932,10 @@ function makeClient(creds, io, timeoutMs, signal) {
     onCredentials: (next) => saveCredentials(next, io.env),
     reloadCredentials: () => loadCredentials(io.env),
     lock: (fn, lockSignal) => withCredentialsLock(io.env, fn, { signal: lockSignal }),
-    onSessionExpired: () => clearCredentials(io.env),
+    onSessionExpired: () => {
+      clearCredentials(io.env);
+      removeNotifyState(io.env);
+    },
     fetchImpl: io.fetchImpl,
     now: io.now,
     timeoutMs,
@@ -2963,6 +2978,7 @@ async function run({ command, args, flags }, io) {
       if (!(err instanceof CredentialsCorruptError) || command !== "login" && command !== "logout") throw err;
       if (command === "logout") {
         clearCredentials(io.env);
+        removeNotifyState(io.env);
         io.stdout(`Removed corrupt credentials file ${err.file}.
 Logged out.
 `);

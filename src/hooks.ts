@@ -70,6 +70,21 @@ function markNotified(env: NodeJS.ProcessEnv, suffix = ''): void {
 }
 
 /**
+ * Logs `message` to hook.log at most hourly per `key` (for problems that recur on every run, like a corrupt config
+ * file). A failure to log is swallowed.
+ */
+export function appendHookLogHourly(env: NodeJS.ProcessEnv, kind: string, key: string, message: string): void {
+  try {
+    const suffix = `.${key}`;
+    if (notifiedRecently(env, suffix)) return;
+    appendHookLog(env, kind, message);
+    markNotified(env, suffix);
+  } catch {
+    // Logging must never fail the caller.
+  }
+}
+
+/**
  * Logs a hook failure to hook.log; a failure to log is swallowed too. Hooks must never fail a Claude Code session.
  * An expired session is logged once; the "Not logged in" that every later hook hits is logged at most hourly.
  */

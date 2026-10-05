@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { MokkanClient } from '../src/client.js';
 import { credentialsPath, hookLogPath } from '../src/credentials.js';
-import { runHook } from '../src/hooks.js';
+import { appendHookLogHourly, runHook } from '../src/hooks.js';
 import type { Ctx } from '../src/cli.js';
 import { CliHarness, NOW, reminder } from './cli-harness.js';
 import { FakeServer, tokenPair } from './fake-server.js';
@@ -223,5 +223,22 @@ describe('mokkan hook', () => {
       await runHook(ctx, 'stop', {}, Date.now() + 5000);
       expect(server.count('POST', '/reminders/deliver')).toBe(1);
     });
+  });
+});
+
+describe('appendHookLogHourly', () => {
+  let h: CliHarness;
+  beforeEach(() => { h = new CliHarness(); });
+  afterEach(() => { h.dispose(); });
+
+  it('logs a recurring problem once an hour per key', () => {
+    const env = h.env();
+    appendHookLogHourly(env, 'notify', 'config', 'config.json: not valid JSON');
+    appendHookLogHourly(env, 'notify', 'config', 'config.json: not valid JSON');
+    appendHookLogHourly(env, 'notify', 'other', 'something else');
+    const lines = readFileSync(hookLogPath(env), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/ notify config\.json: not valid JSON$/);
+    expect(lines[1]).toMatch(/ notify something else$/);
   });
 });

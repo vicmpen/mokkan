@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { credentialsPath } from '../src/credentials.js';
+import { credentialsPath, notifyStateDir } from '../src/credentials.js';
 import { parseArgs } from '../src/cli.js';
 import { CliHarness, NOW, reminder } from './cli-harness.js';
 import { FakeServer, tokenPair } from './fake-server.js';
@@ -95,12 +95,16 @@ describe('mokkan CLI', () => {
     expect(server.requests).toHaveLength(0);
   });
 
-  it('a rejected refresh token: exit 1, "Session expired", credentials removed', async () => {
+  it('a rejected refresh token: exit 1, "Session expired", credentials and notify reminder text removed', async () => {
     server.on('GET', '/reminders', () => ({ status: 401, body: { error: 'unauthorized', message: 'expired' } }));
     server.on('POST', '/auth/refresh', () => ({ status: 401, body: { error: 'invalid_token', message: 'Refresh token is invalid, expired or already used' } }));
+    const shellFile = path.join(notifyStateDir(h.env()), 'shell.txt');
+    mkdirSync(path.dirname(shellFile), { recursive: true });
+    writeFileSync(shellFile, '- [abc] secret\n');
     const res = await h.run(['list'], { serverUrl: server.url, loggedIn: true });
     expect(res).toEqual({ code: 1, stdout: '', stderr: 'Session expired on this machine; run: mokkan login\n' });
     expect(existsSync(credentialsPath(h.env()))).toBe(false);
+    expect(existsSync(shellFile)).toBe(false);
     const again = await h.run(['list'], { serverUrl: server.url });
     expect(again.code).toBe(1);
     expect(again.stderr).toContain('Not logged in');
@@ -418,6 +422,17 @@ describe('mokkan CLI', () => {
     res = await h.run(['logout'], { serverUrl: 'http://127.0.0.1:1' });
     expect(res.code).toBe(0);
     expect(existsSync(credentialsPath(h.env()))).toBe(false);
+  });
+
+  it('logout removes the reminder text mokkan notify keeps, but not the generated shell scripts', async () => {
+    server.on('POST', '/auth/logout', () => ({ status: 204 }));
+    const dir = notifyStateDir(h.env());
+    mkdirSync(dir, { recursive: true });
+    for (const f of ['shell.txt', 'osc.txt', 'notified.json', 'stamp', 'init.zsh']) writeFileSync(path.join(dir, f), 'x\n');
+    const res = await h.run(['logout'], { serverUrl: server.url, loggedIn: true });
+    expect(res.code).toBe(0);
+    for (const f of ['shell.txt', 'osc.txt', 'notified.json', 'stamp']) expect(existsSync(path.join(dir, f))).toBe(false);
+    expect(existsSync(path.join(dir, 'init.zsh'))).toBe(true);
   });
 
   it('status summarises account and session', async () => {
