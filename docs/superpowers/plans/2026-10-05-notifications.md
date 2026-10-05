@@ -77,10 +77,10 @@
   - the 10 s overall timeout and the 3 s notifier timeout hold (fake clock).
 
 ### Task 5: Agents
-- [ ] `launchd.ts`, `systemd-user.ts` and `xdg-autostart.ts`, each with `install`, `remove` and `installed`. Markers: an XML comment for the plist, `# managed by mokkan` elsewhere. Each refuses to overwrite unmarked files and bakes in absolute node and cli paths plus `XDG_CONFIG_HOME` when it is set.
-- [ ] launchd: `bootout` (tolerating "not loaded") before `bootstrap`.
-- [ ] A second `install` with the same content writes nothing.
-- [ ] The plist and unit contents are snapshot-tested. The contract test runs the round trip for every agent in a temp HOME with a fake `Spawner` that records `launchctl`/`systemctl` argv.
+- [x] `launchd.ts`, `systemd-user.ts` and `xdg-autostart.ts`, each with `install`, `remove` and `installed`. Markers: an XML comment for the plist, `# managed by mokkan` elsewhere. Each refuses to overwrite unmarked files and bakes in absolute node and cli paths plus `XDG_CONFIG_HOME` when it is set.
+- [x] launchd: `bootout` (tolerating "not loaded") before `bootstrap`.
+- [x] A second `install` with the same content writes nothing.
+- [x] The plist and unit contents are snapshot-tested. The contract test runs the round trip for every agent in a temp HOME with a fake `Spawner` that records `launchctl`/`systemctl` argv.
 
 ### Task 6: Shells and rc files
 - [ ] Move `replaceFile` from `statusline-remove.ts` into `src/rcfile.ts` (exported), add marked-block insert and remove, and skip the write and the backup when the content would not change.

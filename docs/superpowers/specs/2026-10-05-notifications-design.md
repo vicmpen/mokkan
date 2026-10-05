@@ -200,7 +200,8 @@ which keeps refresh-token rotation safe, A28).
   `Type=oneshot` service with `Environment=` lines; a timer with `OnBootSec=1min`, `OnUnitActiveSec=<interval>s`,
   `AccuracySec=10s`, `WantedBy=timers.target`. `notify-send` needs only the session bus, which the user manager has.
   If the notification daemon is not up yet at the first run, step 6's retry covers it. Enabled with
-  `systemctl --user daemon-reload && systemctl --user enable --now mokkan-notify.timer`.
+  `systemctl --user daemon-reload`, `enable mokkan-notify.timer`, then `restart` (an already running timer keeps its
+  old interval until restarted).
 - **xdg-autostart:** `~/.config/autostart/mokkan-notify.desktop` (`# managed by mokkan`) runs `notify poll --loop`, a
   foreground loop that sleeps for `interval` and exits on SIGTERM when the session ends. Used on Alpine/OpenRC,
   Void/runit and similar systems.
@@ -249,6 +250,10 @@ These could not be checked without the hardware; Task 4 and the manual matrix co
 - ~~How `gdbus call` parses string arguments that look quoted (`'x'`)~~: verified in Task 3 (typed GVariant literals,
   run against a fake notification service under `dbus-run-session`).
 - osascript: `item -1`/`item -2 of argv` and whether `--` reaches the script (the backend works either way).
+- launchd: whether `bootstrap` right after `bootout` can fail with "5: Input/output error" while the old job stops,
+  and whether `launchctl print gui/$UID/dev.mokkan.notify` is the right "loaded" check.
+- systemd: whether `OnBootSec=1min` fires promptly when the timer is started after login.
+- XDG autostart: how GNOME, KDE and minimal sessions parse `Exec=env XDG_CONFIG_HOME=…` with escaped paths.
 - terminal-notifier: the U+2060 prefix that keeps a message starting with `-`, `[`, `{`, `\` … literal.
 
 ## Out of scope
