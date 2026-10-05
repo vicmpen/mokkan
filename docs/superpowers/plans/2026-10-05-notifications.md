@@ -121,15 +121,15 @@
   - `poll` with a too-open `credentials.json` prints nothing and exits 0.
 
 ### Task 8: Contribution scaffolding, docs and release
-- [ ] `CONTRIBUTING.md` (new, public) section "Notifications on your system", `.github/PULL_REQUEST_TEMPLATE/notify-platform.md` and `.github/ISSUE_TEMPLATE/notify-not-working.yml`. Check with a dry export that they are published and that `docs/` and `ASSUMPTIONS.md` are not.
-- [ ] README: a "Notifications" section covering:
+- [x] `CONTRIBUTING.md` (new, public) section "Notifications on your system", `.github/PULL_REQUEST_TEMPLATE/notify-platform.md` and `.github/ISSUE_TEMPLATE/notify-not-working.yml`. Check with a dry export that they are published and that `docs/` and `ASSUMPTIONS.md` are not.
+- [x] README: a "Notifications" section covering:
   - setup, and the stable-install requirement;
   - config keys;
   - the SSH/OSC terminal support table (`auto` mostly means OSC 9 over SSH; tmux needs `allow-passthrough on`);
   - the macOS permission note;
   - how to disable.
-- [ ] Add `notify` to `claude-plugin/skills/mokkan/SKILL.md`, `claude-command/mokkan-cli.md` (kept in sync, `test/plugin.test.ts`) and `codex/SKILL.md`: what Claude or Codex may run (status, test, doctor, on, off) and that setup needs a terminal.
-- [ ] CHANGELOG 0.8.0, `ASSUMPTIONS.md` U19 to U23, version bump in `package.json` and `plugin.json`, then `npm run bundle`.
+- [x] Add `notify` to `claude-plugin/skills/mokkan/SKILL.md`, `claude-command/mokkan-cli.md` (kept in sync, `test/plugin.test.ts`) and `codex/SKILL.md`: what Claude or Codex may run (status, test, doctor, on, off) and that setup needs a terminal.
+- [x] CHANGELOG `## Unreleased` (the repo's convention; the 0.8.0 bump is the separate release commit), `ASSUMPTIONS.md` U19 to U23 and A53 to A61.
 
 ## Manual test matrix (before release)
 

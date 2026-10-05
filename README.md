@@ -145,6 +145,10 @@ mokkan ui                              full-screen view with keyboard actions (s
 mokkan privacy [--json]                the privacy policy's version, link and summary (no login needed)
 mokkan accept                          accept the current privacy policy (see Privacy)
 mokkan delete-account                  delete your account, in a terminal (see Privacy)
+mokkan notify setup | remove           show fired reminders at the prompt and on the desktop, in a terminal (see Notifications)
+mokkan notify on|off [shell|desktop|osc]   turn notification channels on or off
+mokkan notify status | test | doctor   what is set up, a test notification, details for a bug report
+mokkan shell init zsh|bash|fish        print the prompt hook, for dotfiles you manage yourself
 ```
 
 Add `--json` for machine-readable output. `mokkan help` lists everything.
@@ -178,6 +182,91 @@ When the privacy policy has changed, `mokkan ui` shows its summary and link in p
 
 Due ones on the tab you are looking at count as shown: acknowledge them with `a`, or their email goes out after the server's grace period. When you are not logged in, `mokkan ui` opens on a login screen; `mokkan register` and `mokkan logout` stay terminal commands. The view needs a real terminal, so it does not work through `/mokkan:mokkan`. It has no mouse support, measures wide characters and emoji as well as it can, and is untested on Windows.
 
+## Notifications
+
+`mokkan notify setup` brings scheduled reminders to your shell prompt and your desktop, so you see them without Claude Code open.
+
+It shows one kind of reminder: one made with `mokkan in` (or given a time with `edit --in` or `--at`) whose time has passed and that you haven't acknowledged. Plain pushes are never shown. Showing is read-only: it doesn't mark anything delivered or tell the server a session is active, so the email still goes out until you run `mokkan ack`.
+
+### Setup
+
+Run it in a terminal:
+
+```
+npm i -g @vicmpen/mokkan-cli
+mokkan notify setup
+```
+
+Setup bakes the paths of `node` and of mokkan into your shell config and a background agent, so it needs an install that stays where it is: `npm i -g @vicmpen/mokkan-cli`, or `install.sh`'s `~/.local/bin/mokkan`. It refuses to run from `npx` or from the Claude Code plugin's copy, because those paths change with every update.
+
+Setup looks at your system, prints a plan and asks before each step:
+
+| System | What it installs |
+|---|---|
+| macOS | the prompt hook, and a launchd agent (`~/Library/LaunchAgents/dev.mokkan.notify.plist`) |
+| Linux desktop with systemd | the prompt hook, and a user timer (`~/.config/systemd/user/mokkan-notify.timer`) |
+| Other Linux desktops | the prompt hook, and an autostart entry (`~/.config/autostart/mokkan-notify.desktop`) that runs at your next login |
+| No desktop (a server, WSL) | the prompt hook only |
+
+The agent checks every 60 seconds and pops up a native notification: terminal-notifier or `osascript` on macOS, `notify-send`, `gdbus` or `kdialog` on Linux. More than three at once become one "4 reminders due". Desktop notifications stay off until you say yes in setup, and setup sends a test notification and asks whether you saw it. If you run setup over SSH on a machine that has a desktop, the notifications appear on that machine's screen.
+
+The prompt hook works in zsh, bash (including macOS's bash 3.2) and fish; setup installs it for your login shell (`$SHELL`). It adds a marked block (`# >>> mokkan notify >>>`) to `~/.zshrc` or `~/.bashrc` (on macOS, `~/.bash_profile` when you have one), with a backup, and for fish it writes `~/.config/fish/conf.d/mokkan.fish`. Every open shell prints the reminders once at its next prompt, and again only when the set changes: a new one fires, or you acknowledge one. The hook starts mokkan in the background at most once a minute; the other prompts read a small file.
+
+Setup is safe to run again. Run it again after you change `interval`, so the agent picks it up.
+
+### macOS
+
+Notifications sent through `osascript` are attributed to Script Editor, and macOS may block them without saying so. If the test notification doesn't appear, allow notifications for Script Editor in System Settings → Notifications, or install terminal-notifier (`brew install terminal-notifier`), which mokkan prefers when it is there.
+
+### Over SSH
+
+On a remote machine the prompt hook prints the reminders in your terminal. It can also send a terminal escape (OSC) that makes the terminal on your own computer show a desktop notification. This is off by default: turn it on when setup asks (it asks only over SSH), or with `mokkan notify on osc`. The escape is sent only when `SSH_CONNECTION` is set.
+
+| Terminal | Escape |
+|---|---|
+| iTerm2, WezTerm, Ghostty | OSC 9 |
+| foot; rxvt-unicode with its notify extension | OSC 777 |
+| kitty | OSC 99 |
+
+`osc` is `auto` when you turn it on: kitty gets 99, foot 777, everything else 9. SSH usually doesn't pass `TERM_PROGRAM` on, so over SSH `auto` mostly means OSC 9. If your terminal needs another one, set `osc` to `"777"` or `"99"` in the config. Terminals that don't know the escape ignore it. Inside tmux, the escape needs `set -g allow-passthrough on` in `~/.tmux.conf`.
+
+### Settings
+
+The settings are in `~/.config/mokkan/config.json`, created by `setup`, `on` or `off`:
+
+```json
+{
+  "notifications": {
+    "shell": true,
+    "desktop": false,
+    "osc": "off",
+    "interval": 60
+  }
+}
+```
+
+- `shell`: print reminders at the prompt (default on).
+- `desktop`: native notifications (default off until you say yes in setup).
+- `osc`: `"off"`, `"auto"`, `"9"`, `"777"` or `"99"` (default off).
+- `interval`: seconds between checks, at least 30 (default 60).
+
+`mokkan notify off` turns every channel off and `mokkan notify on` turns them on; `mokkan notify off desktop` turns off one. Neither installs or removes anything. `MOKKAN_NOTIFY=0` in the environment turns everything off for that shell or session. If the file can't be read, everything stays off until you fix it, and `mokkan notify status` says why.
+
+### Checking and removing
+
+```
+mokkan notify status     # settings, what is installed, the last check and its result
+mokkan notify test       # a test notification through every channel that is on
+mokkan notify doctor     # status plus what detection found, to paste into a bug report
+mokkan notify remove     # in a terminal: take it all out again
+```
+
+`doctor` replaces your user name, host name and home directory with placeholders. `remove` takes out the rc block (after a backup), the fish file, the agent and the files in `~/.config/mokkan/notify/`. It keeps your settings in `config.json`, and leaves alone any file that isn't marked as mokkan's. Open shells keep the hook until you restart them.
+
+If you manage your dotfiles yourself, `mokkan shell init zsh` (or `bash`, `fish`) prints the hook; source it from your own config instead of letting setup edit it.
+
+`mokkan logout`, an expired session and `mokkan delete-account` delete the reminder text kept in `~/.config/mokkan/notify/`. The hook itself stays and starts showing reminders again after you log back in.
+
 ## Credits and pricing
 
 mokkan uses prepaid credits. **€5 buys 500 credits** (1 credit = 1 cent). A new account starts with 50 free credits, and credits never expire.
@@ -195,6 +284,8 @@ A reminder with a due time keeps 1 credit in reserve for its email until the ema
 
 ## Uninstall
 
+If you set up notifications, run `mokkan notify remove` in a terminal first: the prompt hook and the agent run mokkan.
+
 If you set up the status line that 0.2.0 offered, remove it first, because it runs mokkan: `mokkan statusline --remove` in a terminal (or `/mokkan statusline --remove`). This takes it out of `settings.json` and `~/.tmux.conf` after backups and deletes the copy in `~/.local/share/mokkan/`. Then:
 
 - Claude Code plugin: `/plugin uninstall mokkan@mokkan`.
@@ -208,6 +299,7 @@ The privacy policy is at [mokkan.dev/privacy](https://www.mokkan.dev/privacy/). 
 - Your email address, your reminders and your credit transactions are stored on the mokkan server (`api.mokkan.dev`). This lets them sync between sessions and lets scheduled reminders be emailed to you.
 - Payments go through Stripe Checkout. mokkan never sees your card details.
 - On your machine, mokkan keeps your login tokens in `~/.config/mokkan/credentials.json` (mode 0600). Hook errors are logged to `hook.log` in the same directory.
+- If you set up notifications, `~/.config/mokkan/notify/` (mode 0700) holds the text of the reminders the prompt hook shows. Logging out and deleting your account remove it.
 - `MOKKAN_SERVER_URL` points the CLI at a different server.
 
 Every account accepts the current policy: when you register, and again whenever a new version is published. Until you accept a new version, commands stop with exit code 4 and say how to accept; reminders you already have are still emailed when they come due, and `mokkan ack` keeps working.
@@ -254,6 +346,8 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 - `install.sh` sets up a dev checkout. It runs `npm ci` and the build, then links `~/.local/bin/mokkan`, `~/.codex/skills/mokkan` and `~/.claude/commands/mokkan-cli.md` (removing its old `~/.claude/commands/mokkan.md` link), and prints the `claude --plugin-dir` command.
   - It only creates or refreshes symlinks that point into this checkout. Any other file at those paths is left alone with a `warning: ... is not ours; skipped` line.
   - `MOKKAN_INSTALL_SKIP_BUILD=1` skips the install and build steps.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to add a shell, a desktop notifier or a background agent to `mokkan notify`.
 
 Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.claude-plugin/plugin.json`, because plugin users stay on a version until it changes. A test checks this. `npm publish` runs the build, typecheck, tests and bundle check first.
 

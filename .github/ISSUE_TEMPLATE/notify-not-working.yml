@@ -1,0 +1,50 @@
+name: Notifications not working
+description: mokkan notify setup, the prompt hook or desktop notifications don't work as described.
+title: "notify: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please run `mokkan notify doctor` and paste its output below: it shows what mokkan detected on your system. It replaces your user name, host name and home directory, but read it before you post it.
+  - type: input
+    id: os
+    attributes:
+      label: Operating system and version
+      placeholder: Ubuntu 24.04, macOS 15.1, Arch (rolling)
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Desktop or window manager
+      description: And the notification daemon, if you know it. Write "none" for a server.
+      placeholder: GNOME 46 (Wayland), sway + mako, none
+    validations:
+      required: true
+  - type: input
+    id: shell
+    attributes:
+      label: Shell and version
+      placeholder: zsh 5.9, bash 3.2, fish 3.7
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      description: The terminal emulator, and whether you use tmux or SSH.
+      placeholder: iTerm2 over SSH, inside tmux 3.4
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: mokkan notify doctor output
+      render: text
+    validations:
+      required: true

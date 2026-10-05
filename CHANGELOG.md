@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Notifications outside Claude Code.** `mokkan notify setup`, run in a terminal, shows scheduled reminders that have fired and are not acknowledged at your shell prompt and as desktop notifications. It looks at the system and asks before each step: a prompt hook for zsh, bash (3.2 too) or fish, and a background agent that checks every 60 seconds (launchd on macOS, a systemd user timer on Linux desktops, XDG autostart elsewhere; only the prompt hook on a machine without a desktop). It needs a stable install (`npm i -g @vicmpen/mokkan-cli`), not npx or the plugin's copy.
+- **Read-only.** Showing a reminder marks nothing delivered and sends no heartbeat, so its email still goes out until you `mokkan ack` it. Plain pushes are never shown. Every open shell prints the reminders once, and again when the set changes.
+- **Over SSH, opt-in.** The prompt hook can also send a terminal escape (OSC 9, 777 or 99) so the terminal on your own computer shows a notification. It is off until you turn it on in setup or with `mokkan notify on osc`; tmux needs `allow-passthrough on`.
+- **Settings and switches.** `~/.config/mokkan/config.json` holds `shell`, `desktop`, `osc` and `interval`; `mokkan notify on|off [shell|desktop|osc]` flips them and `MOKKAN_NOTIFY=0` turns everything off. `mokkan notify status`, `test` and `doctor` show what is set up, send a test notification and print details for a bug report; `mokkan notify remove` takes it all out; `mokkan shell init zsh|bash|fish` prints the hook for dotfiles you manage yourself.
+- `mokkan logout`, an expired session and `mokkan delete-account` also delete the reminder text kept for notifications. `CONTRIBUTING.md` explains how to add a shell, a desktop notifier or a background agent.
+- No server change.
+
 ## 0.7.0
 
 - **Privacy policy.** Every account accepts the policy at [mokkan.dev/privacy](https://mokkan.dev/privacy). `mokkan register` shows its summary before it sends the code and goes on only on `y`; without a terminal, `register --start` and `--complete` need `--accept-privacy <version>` (the pane passes the version it showed). When a new version is published, a command run in a terminal shows the summary and asks `y accept · n quit · d delete my account`, then runs once more; without a terminal it prints how to accept and exits 4, a new exit code (from `sync` too). `mokkan watch` stops with exit 4, the hooks log it at most hourly, and `mokkan ui` shows the summary in place of the list (`y` accept, `n` quit, `d` delete). Needs a server with `GET /privacy` and `POST /privacy/accept`.
