@@ -4,6 +4,7 @@ import path from 'node:path';
 import { main, type CliIO, type TerminalIO } from '../src/cli.js';
 import { saveCredentials, type Credentials } from '../src/credentials.js';
 import type { Spawner } from '../src/spawn.js';
+import type { NotifyEnv } from '../src/commands/notify.js';
 import type { Reminder } from '../src/types.js';
 
 export const NOW = new Date('2026-09-28T12:00:00.000Z');
@@ -21,6 +22,8 @@ export interface RunOptions {
   tty?: TerminalIO;
   /** Replaces process spawning; the default answers every command as not installed, so tests never start one. */
   spawn?: Spawner;
+  /** The node and cli paths, uid, platform and host name the notify commands see. */
+  notify?: Partial<NotifyEnv>;
 }
 
 /** A Spawner for which every command is missing (`ENOENT`). */
@@ -74,6 +77,7 @@ export class CliHarness {
       openUrl: (url) => { opts.opened?.push(url); return true; },
       tty: opts.tty,
       spawn: opts.spawn ?? missingSpawner,
+      notify: opts.notify,
     };
     const code = await main(argv, io);
     return { code, stdout, stderr };

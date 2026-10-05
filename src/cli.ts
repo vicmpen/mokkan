@@ -22,6 +22,7 @@ import { statuslineCommand } from './statusline-remove.js';
 import { acceptCommand, askToAccept, deleteAccountCommand, privacyCommand } from './commands/privacy.js';
 import { EXIT_PRIVACY_REQUIRED, isPrivacyRequired, isPrivacyStale } from './privacy.js';
 import { execFileSpawner, type Spawner } from './spawn.js';
+import { NOTIFY_POLL_CLIENT_TIMEOUT_MS, notifyCommand, notifyPollCommand, shellCommand, type NotifyEnv } from './commands/notify.js';
 
 export { EXIT_PRIVACY_REQUIRED };
 
@@ -56,6 +57,8 @@ export interface CliIO {
   spawn?: Spawner;
   /** The terminal for `mokkan ui` (defaultIO wires process.stdin/stdout; tests pass a FakeTerminal). */
   tty?: TerminalIO;
+  /** Overrides for the node and cli paths, uid, platform and host name the notify commands use (tests). */
+  notify?: Partial<NotifyEnv>;
 }
 
 export interface Ctx {
@@ -85,6 +88,7 @@ const COMMAND_FLAGS = new Map<string, { boolean: string[]; value: string[] }>([
   ['sync', { boolean: ['deliver'], value: [] }],
   ['accept', { boolean: ['yes'], value: ['version'] }],
   ['register', { boolean: [], value: ['accept-privacy'] }],
+  ['notify', { boolean: ['loop', 'yes'], value: [] }],
 ]);
 
 /**
@@ -178,6 +182,16 @@ export const USAGE = `Usage: mokkan <command> [args] [--json]
   mokkan hook session-start|stop  Claude Code hook entrypoints (JSON on stdin)
   mokkan watch [--interval N]     foreground poller (--once for a single pass)
   mokkan statusline --remove      take an earlier version's status line out of settings.json and ~/.tmux.conf
+  mokkan notify setup [--yes]     show fired scheduled reminders at the shell prompt and on the desktop (in a
+                                  terminal; asks before each step)
+  mokkan notify remove            take the prompt hook and the background agent out again (in a terminal)
+  mokkan notify on|off [shell|desktop|osc]
+                                  turn notification channels on or off (all of them without a channel)
+  mokkan notify status [--json]   settings, what is installed, the last poll
+  mokkan notify test              send a test notification through every enabled channel
+  mokkan notify doctor            detection details to paste into a bug report (names and paths redacted)
+  mokkan notify poll [--loop]     one background poll (the agent and the prompt hook run it)
+  mokkan shell init zsh|bash|fish print the prompt hook, for dotfiles managed by hand
 
   --exit-zero                     report errors on stdout and always exit 0 (for the /mokkan slash command)
   --argline "<words>"             first argument only: split the string on whitespace and use it as the arguments
@@ -311,6 +325,19 @@ async function run({ command, args, flags }: ParsedArgs, io: CliIO): Promise<num
   }
   if (command === 'hook') return hookEntry(args, flags, io);
   if (command === 'statusline') return statuslineCommand(io, args);
+  // Like hook: never prints, always exits 0, loads the credentials itself.
+  if (command === 'notify' && args[0] === 'poll') {
+    return notifyPollCommand(io, flags, (creds) => makeClient(creds, io, NOTIFY_POLL_CLIENT_TIMEOUT_MS));
+  }
+  // notify and shell need no client: a broken credentials file must not stop status, doctor or remove.
+  if (command === 'notify' || command === 'shell') {
+    try {
+      const ctx = { io, json: flags.json === true, flags };
+      return command === 'notify' ? await notifyCommand(ctx, args) : await shellCommand(ctx, args);
+    } catch (err) {
+      return reportError(err, io);
+    }
+  }
   try {
     let creds: Credentials | null;
     try {

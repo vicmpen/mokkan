@@ -104,15 +104,15 @@
 - [x] CI: install `zsh fish` in `.github/workflows/ci.yml`, and add a `macos-latest` job that runs the bash 3.2 and zsh cases.
 
 ### Task 7: Commands
-- [ ] `src/commands/notify.ts`:
+- [x] `src/commands/notify.ts`:
   - `setup`: refuses without a TTY and with `--exit-zero`; refuses a CLI under a plugin cache or `_npx`; asks each question with `prompt`; runs the test notification per backend ("Did you see it? [Y/n]", falling back to the next backend, then the Script Editor / terminal-notifier hint).
   - `remove`: the same terminal-only checks.
   - `on`/`off`: regenerate `init.<shell>`.
   - `status`, `test`.
   - `doctor`: checks the baked paths exist and redacts the user name, host name and home path.
   - `poll`, and `shell init`.
-- [ ] Wire into `src/cli.ts`: `notify poll` is dispatched before credential loading and `reportError`, like `hook` (`src/cli.ts:305`), and always exits 0. Add `notify` and `shell` to `dispatch` and `USAGE`, and `COMMAND_FLAGS` entries for `--loop` and `--yes` (`--json` is already global).
-- [ ] Tests: `test/notify-command.test.ts` covers:
+- [x] Wire into `src/cli.ts`: `notify poll` is dispatched before credential loading and `reportError`, like `hook` (`src/cli.ts:305`), and always exits 0. Add `notify` and `shell` to `dispatch` and `USAGE`, and `COMMAND_FLAGS` entries for `--loop` and `--yes` (`--json` is already global).
+- [x] Tests: `test/notify-command.test.ts` covers:
   - `setup` end to end in a temp HOME on a fake Linux GNOME, a fake macOS and a fake headless machine;
   - a second `setup` changes nothing;
   - the `/mokkan` path (`--argline … --exit-zero`) refuses `setup` and `remove` and allows `status`, `test`, `doctor`, `on` and `off`;
