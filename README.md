@@ -7,7 +7,7 @@
 /plugin install mokkan@mokkan
 ```
 
-Then `/mokkan` opens the pane, and closes it again; `/mokkan push call the bank` runs a command straight away. New to mods? Read [Getting started with Claude Code mods](https://claude.dev/blog/getting-started-with-claude-code-mods/).
+Then `/mokkan` opens the pane, and closes it again; `/mokkan push call the bank` runs a command straight away. New to mods? Read [Getting started with Claude Code mods](https://claude.dev/blog/getting-started-with-claude-code-mods/). The tour, with a live demo, is at [mokkan.dev](https://www.mokkan.dev).
 
 ## One push. Every session.
 
@@ -126,7 +126,7 @@ mokkan status                       # who you are, server, balance
 mokkan delete-account               # deletes the account and everything on it (see Privacy)
 ```
 
-Registration and login ask for a password without showing it, so run them in a terminal. When you try them from Claude Code, the command only prints the terminal command you need. Registering shows a summary of the [privacy policy](https://mokkan.dev/privacy) first and goes on only when you answer `y`; the pane shows the same summary before it asks for your email.
+Registration and login ask for a password without showing it, so run them in a terminal. When you try them from Claude Code, the command only prints the terminal command you need. Registering shows a summary of the [privacy policy](https://www.mokkan.dev/privacy/) first and goes on only when you answer `y`; the pane shows the same summary before it asks for your email.
 
 ## Commands
 
@@ -203,7 +203,7 @@ If you set up the status line that 0.2.0 offered, remove it first, because it ru
 
 ## Privacy
 
-The privacy policy is at [mokkan.dev/privacy](https://mokkan.dev/privacy). In short:
+The privacy policy is at [mokkan.dev/privacy](https://www.mokkan.dev/privacy/). In short:
 
 - Your email address, your reminders and your credit transactions are stored on the mokkan server (`api.mokkan.dev`). This lets them sync between sessions and lets scheduled reminders be emailed to you.
 - Payments go through Stripe Checkout. mokkan never sees your card details.

@@ -5,13 +5,17 @@
   "author": {
     "name": "Victor Benetatos"
   },
-  "homepage": "https://github.com/vicmpen/mokkan#readme",
+  "homepage": "https://www.mokkan.dev",
   "repository": "https://github.com/vicmpen/mokkan",
   "license": "MIT",
   "keywords": [
     "reminders",
     "todo",
-    "productivity"
+    "productivity",
+    "claude-code-mod",
+    "codex",
+    "cross-session",
+    "sync"
   ],
   "types": "./types/index.d.ts"
 }

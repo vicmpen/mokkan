@@ -8,10 +8,16 @@
     "cli",
     "claude-code",
     "claude-code-plugin",
+    "claude-code-mod",
     "codex",
+    "ai-agents",
+    "agent",
+    "cross-session",
+    "sync",
+    "terminal",
     "tmux"
   ],
-  "homepage": "https://github.com/vicmpen/mokkan#readme",
+  "homepage": "https://www.mokkan.dev",
   "bugs": {
     "url": "https://github.com/vicmpen/mokkan/issues"
   },
