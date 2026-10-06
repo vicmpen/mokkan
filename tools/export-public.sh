@@ -8,7 +8,8 @@
 # The commit is authored with the GitHub noreply address. Nothing is pushed.
 set -euo pipefail
 
-EXCLUDE=(.claude docs/internal .superpowers)
+# Private: design docs (specs, plans, critiques, the decision log) stay in this repository only (A42).
+EXCLUDE=(.claude .superpowers .impeccable docs ASSUMPTIONS.md)
 AUTHOR_NAME="Victor Benetatos"
 AUTHOR_EMAIL="14978603+vicmpen@users.noreply.github.com"
 

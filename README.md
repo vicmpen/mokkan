@@ -254,7 +254,6 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 - `install.sh` sets up a dev checkout. It runs `npm ci` and the build, then links `~/.local/bin/mokkan`, `~/.codex/skills/mokkan` and `~/.claude/commands/mokkan-cli.md` (removing its old `~/.claude/commands/mokkan.md` link), and prints the `claude --plugin-dir` command.
   - It only creates or refreshes symlinks that point into this checkout. Any other file at those paths is left alone with a `warning: ... is not ours; skipped` line.
   - `MOKKAN_INSTALL_SKIP_BUILD=1` skips the install and build steps.
-- `ASSUMPTIONS.md` records every decision and the reason for it.
 
 Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.claude-plugin/plugin.json`, because plugin users stay on a version until it changes. A test checks this. `npm publish` runs the build, typecheck, tests and bundle check first.
 
