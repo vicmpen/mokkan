@@ -126,6 +126,15 @@ const TERMINAL_ONLY: Record<string, string> = {
 }
 
 const firstLine = (out: string) => out.split('\n')[0] ?? ''
+/**
+ * Reminder text for `$.ui.notify`, whose channels are terminal escapes: line breaks become spaces, and no control
+ * character or bidi override survives (the rule of the CLI's `src/notify/sanitize.ts`), clamped to 300 code points.
+ */
+const plain = (text: string) => {
+  const clean = text.replace(/[\t\n\v\f\r\x85\u2028\u2029]+/g, ' ').replace(/[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').replace(/\s+/g, ' ').trim()
+  const points = Array.from(clean)
+  return points.length <= 300 ? clean : `${points.slice(0, 300).join('').trimEnd()}…`
+}
 const json = <T,>(out: string): T | null => {
   try {
     return JSON.parse(out) as T
@@ -164,7 +173,11 @@ async function refresh($: EngineInterface): Promise<void> {
     // A timed reminder that is due has been shown nowhere: toast it, and sync marked it delivered, so the server emails
     // it only if it isn't acked within its grace period. A todo is due the moment it is pushed: never.
     if (got) {
-      for (const r of next.reminders) if (r.due_at !== null && r.state === 'due') $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
+      for (const r of next.reminders) {
+        if (r.due_at === null || r.state !== 'due') continue
+        $.ui.toast(`mokkan: due · ${r.text}`, { timeoutMs: MESSAGE_MS })
+        void notify($, r.text)
+      }
       const delivered = got.delivered ?? []
       if (delivered.length > 0) {
         const at = new Date(await $.clock.now()).toISOString()
@@ -187,6 +200,17 @@ async function refresh($: EngineInterface): Promise<void> {
   } finally {
     if (mine === seq) await update($, syncing, () => false)
   }
+}
+
+/**
+ * A native notification through the user's own notification channel (Claude Code 2.1.295+), which reaches a terminal
+ * behind another window. Best effort: with no channel it resolves `isSent: false`, and on an older build, which has no
+ * `ui.notify`, the call throws; the toast has shown it either way.
+ */
+async function notify($: EngineInterface, text: string): Promise<void> {
+  try {
+    await $.ui.notify(plain(text), { title: 'mokkan: due' })
+  } catch {}
 }
 
 async function land($: EngineInterface, v: MokkanView): Promise<void> {

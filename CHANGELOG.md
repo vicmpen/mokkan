@@ -7,6 +7,7 @@
 - **Over SSH, opt-in.** The prompt hook can also send a terminal escape (OSC 9, 777 or 99) so the terminal on your own computer shows a notification. It is off until you turn it on in setup or with `mokkan notify on osc`; tmux needs `allow-passthrough on`.
 - **Settings and switches.** `~/.config/mokkan/config.json` holds `shell`, `desktop`, `osc` and `interval`; `mokkan notify on|off [shell|desktop|osc]` flips them and `MOKKAN_NOTIFY=0` turns everything off. `mokkan notify status`, `test` and `doctor` show what is set up, send a test notification and print details for a bug report; `mokkan notify remove` takes it all out; `mokkan shell init zsh|bash|fish` prints the hook for dotfiles you manage yourself.
 - `mokkan logout`, an expired session and `mokkan delete-account` also delete the reminder text kept for notifications. `CONTRIBUTING.md` explains how to add a shell, a desktop notifier or a background agent.
+- **The pane raises a native notification too.** When the open pane finds a timed reminder due, it still shows the 15-second toast, and on Claude Code 2.1.295 or later it also sends a notification through your Claude Code notification setting (`preferredNotifChannel`: iTerm2, kitty, Ghostty or the terminal bell), so you see it with the terminal behind another window. With no channel set up for your terminal, or on an older Claude Code, you get only the toast.
 - No server change.
 
 ## 0.7.0

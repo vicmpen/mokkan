@@ -43,19 +43,25 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
   const opens: Record<string, unknown>[] = []
   const toasts: string[] = []
   const toastMs: (number | undefined)[] = []
+  const notified: { text: string; title?: string }[] = []
   const commands: Record<string, unknown>[] = []
   let stats = 0
   on('ui.open', (_, e) => { opens.push({ ...e }); if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
   let listed = 0
   on('ui.panes', () => (listed++, { value: panes.map(p => ({ ...p, title: 'mokkan', isShown: true, isFocused: true, isPlaced: true })) }))
   on('ui.toast', (_, e) => { toasts.push(String((e as { text?: unknown }).text ?? JSON.stringify(e))); toastMs.push((e as { timeoutMs?: number }).timeoutMs); return { value: undefined } })
+  on('ui.notify', (_, e) => {
+    notified.push({ ...e })
+    if (session.notifyFails) throw new Error("mokkan: $.ui.notify: the channel's write failed")
+    return { value: { isSent: true, channel: 'kitty' } }
+  })
   on('ui.focus', () => ({}))
   on('command.register', (_, e) => { commands.push({ ...e }); return { value: { command: e.name } } })
   on('ui.close', (_, e) => { panes.splice(panes.findIndex(p => p.id === e.id) >>> 0, 1); return { value: undefined } })
   on('fs.stat', () => { stats++; return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } } })
   const ran: string[][] = []
   const envs: Record<string, string>[] = []
-  const session = { loggedIn: true, offline: false, opens: true, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number>, policy: POLICY, accepted: POLICY }
+  const session = { loggedIn: true, offline: false, opens: true, stack: STACK(), done: DONE(), fail: {} as Record<string, string>, slow: {} as Record<string, number>, policy: POLICY, accepted: POLICY, notifyFails: false }
   on('process.run', async (_, e) => {
     ran.push([...e.argv])
     envs.push(e.init?.env ?? {})
@@ -100,7 +106,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
     if (cmd === 'push') stack.unshift(row(`f6f6f6f6-0000-4000-8000-${String(stack.length).padStart(12, '0')}`, e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, store, listed: () => listed, envs, clock, toasts, toastMs, commands, panes, opens, stats: () => stats }
+  return { ran, session, store, listed: () => listed, envs, clock, toasts, toastMs, notified, commands, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -656,6 +662,37 @@ test('toasts: a timed reminder that is due, once, and it is marked delivered; ne
   expect(toasts[1]).toContain('ask Maria re notes')
   await ui.press({ key: 'refresh' })
   expect(toasts).toHaveLength(2) // delivered now: not again
+  await ui.unmount()
+})
+
+test('a native notification carries the reminder as plain text: no escape, control character or bidi override', async ($, on) => {
+  const { session, clock, notified } = fakeCli(on)
+  session.stack = [row(E, 'pay\x1b]0;rent\x07\n\u202enow', 'due', -5)]
+  await opened($, clock)
+  expect(notified).toEqual([{ text: 'pay]0;rent now', title: 'mokkan: due' }])
+})
+
+test('a due reminder also raises a native notification, once; never a todo; a failed one is ignored', async ($, on) => {
+  const { session, clock, toasts, notified } = fakeCli(on)
+  await opened($, clock)
+  expect(notified).toEqual([{ text: 'call the bank', title: 'mokkan: due' }])
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+
+  await ui.press({ key: 'push' })
+  await ui.input({ key: 'field', text: 'milk' })
+  await clock.settle()
+  expect(notified).toHaveLength(1) // a todo: no notification
+  await ui.press({ key: 'refresh' })
+  expect(notified).toHaveLength(1) // delivered now: not again
+
+  // A channel whose write fails rejects; the toast still shows and the pane carries on.
+  session.notifyFails = true
+  session.stack = session.stack.map(r => (r.id === C ? { ...r, state: 'due' } : r))
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(notified).toHaveLength(2)
+  expect(toasts.at(-1)).toContain('ask Maria re notes')
+  expect(session.stack.find(r => r.id === C)?.state).toBe('delivered')
   await ui.unmount()
 })
 
