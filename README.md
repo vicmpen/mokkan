@@ -71,7 +71,7 @@ It is laid out like `mokkan ui`: the header with your credits, `TODOs 2 │ Remi
 
 Archiving with `Enter` and logging out ask first, naming what they act on and what each answer does: `archive "call the bank"?`, with `y: archive · n: keep` underneath. While a command runs, other keys wait. The line above the commands shows each result with the reminder it touched (`added · call mom`, `due in 2h · call the bank`). The pane stays on its tab: a new or changed one that belongs on another tab says where it went (`added to TODOs · call mom`, `moved to Reminders, due in 2h · renew the cert`), errors start with `error:` in red and wrap so the fix at their end (`Run: mokkan buy`) stays readable, and the line clears itself after 15 seconds. The header's balance turns yellow under 10 credits (`· 7 credits · low`) and red at 0; `b` opens Stripe Checkout to add more. When the server can't be reached the pane keeps the last list and marks it `offline · synced 12:04`, the time of the last good sync; online the bottom line reads `synced 12:04`, and while a command runs it names it (`archiving…`).
 
-The mod runs the plugin's own copy of the CLI and polls the server every 15 seconds while it is open and after every action. Each poll tells the server a session is active, and every reminder with a due time that has come due is shown as a toast and marked delivered. Todos are never toasted. Mods ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules`, and that is all it holds.
+The mod runs the plugin's own copy of the CLI and syncs when it opens and after every action, then 15 seconds after each sync while it is open. When a sync fails the wait doubles, up to 60 seconds, and the next good sync puts it back to 15. Each sync tells the server a session is active, and every reminder with a due time that has come due is shown as a toast and marked delivered. On Claude Code 2.1.295 or later it also raises a native notification through your Claude Code notification setting (`preferredNotifChannel`: iTerm2, kitty, Ghostty or the terminal bell), so you see it with the terminal behind another window; without a channel for your terminal you get the toast alone. Todos are never shown this way. Mods ship inside plugins, so there is nothing extra to install: the plugin's `hooks/hooks.json` names the module under `modules`, and that is all it holds.
 
 ## Install
 
@@ -92,6 +92,8 @@ The plugin provides:
 - **A mod**: the pane, with your stack beside the transcript and the same actions as `mokkan ui` (see below).
 
 The plugin includes its own copy of the CLI, so you don't need the npm package, but `node` (20.3 or later) must be on your PATH: the plugin's command and pane run the CLI with it. To run `register`, `login` or `buy`, which ask for a password or open a browser, you need a terminal. Use `npx @vicmpen/mokkan-cli …` there, or install the npm package.
+
+To see reminders when Claude Code isn't open, at your shell prompt and on your desktop, install the npm package and run `mokkan notify setup` in a terminal (see [Notifications](#notifications)). It doesn't run from the plugin's copy of the CLI.
 
 ### Terminal (npm)
 
@@ -330,6 +332,7 @@ MIT. See [LICENSE](LICENSE).
 npm ci
 npm test               # vitest
 npm run typecheck
+npm run typecheck:plugin  # the mod and its tests, against tools/claude-code-types
 npm run build          # tsc -> dist/ (the npm package's bin)
 npm run bundle         # esbuild -> claude-plugin/scripts/mokkan.mjs (commit it)
 npm run check:bundle   # fails if the committed bundle is stale (also a test)
@@ -337,7 +340,7 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 
 - `src/` holds the `mokkan` CLI, written in TypeScript with no runtime dependencies.
 - `claude-plugin/` is the Claude Code plugin, and `.claude-plugin/marketplace.json` makes this repository its marketplace.
-  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It answers `/mokkan`: the engine keeps that bare name for the plugin's skill and runs a typed `/mokkan` as `/mokkan:mokkan`, so the mod registers no command and hooks `command.run` on the skill's name instead (and on a user-level `/mokkan`, should one exist). It hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
+  - `hooks/pane.tsx` is the mod: a hooks module exporting `register(on, options)`, named under `modules` in `hooks/hooks.json`. It answers `/mokkan`: the engine keeps that bare name for the plugin's skill and runs a typed `/mokkan` as `/mokkan:mokkan`, so the mod registers no command and hooks `command.run` on the skill's name instead (and on a user-level `/mokkan`, should one exist). It hooks `session.start`, `command.run`, `ui.render`, `ui.focus` and `prompt.edit` (to drop a key that leaves the focused pane), keeps its values in `$.state` under the contract in `types/index.d.ts`, and runs the CLI through `$.process.run`. `npm run test:plugin` runs `claude plugin validate` and `claude plugin test` on it (`tests/pane.test.tsx`); vitest does not load it. CI runs both on the Claude Code version pinned in `CLAUDE_CODE_VERSION` (`.github/workflows/ci.yml`), and type-checks the mod against `tools/claude-code-types/`, a snapshot of that version's declarations; its README says how to move both to a newer Claude Code. While developing, `claude --plugin-dir claude-plugin` loads it with hot reloading: every save reloads the module in place.
   - `skills/mokkan/SKILL.md` is the skill. A typed `/mokkan` never reaches its text (the mod answers it), so it runs only when Claude invokes it. It runs `node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs"` through `!` bash expansion (quoted, so a plugin path with spaces works; the `allowed-tools` rule carries the same quotes).
   - `scripts/mokkan.mjs` is the bundled CLI. It is committed because plugins are installed straight from git.
   - Check the plugin with `claude plugin validate .` and `claude plugin validate claude-plugin`.
@@ -349,7 +352,7 @@ npm run check:bundle   # fails if the committed bundle is stale (also a test)
 
 [CONTRIBUTING.md](CONTRIBUTING.md) explains how to add a shell, a desktop notifier or a background agent to `mokkan notify`.
 
-Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.claude-plugin/plugin.json`, because plugin users stay on a version until it changes. A test checks this. `npm publish` runs the build, typecheck, tests and bundle check first.
+Releases: keep `version` in `package.json` equal to the one in `claude-plugin/.claude-plugin/plugin.json`, because plugin users stay on a version until it changes, and to `VERSION` in `src/version.ts`; then run `npm run bundle`. Tests check all three. `npm publish` runs the build, typecheck, tests and bundle check first.
 
 ### Shell quoting
 

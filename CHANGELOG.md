@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - **Notifications outside Claude Code.** `mokkan notify setup`, run in a terminal, shows scheduled reminders that have fired and are not acknowledged at your shell prompt and as desktop notifications. It looks at the system and asks before each step: a prompt hook for zsh, bash (3.2 too) or fish, and a background agent that checks every 60 seconds (launchd on macOS, a systemd user timer on Linux desktops, XDG autostart elsewhere; only the prompt hook on a machine without a desktop). It needs a stable install (`npm i -g @vicmpen/mokkan-cli`), not npx or the plugin's copy.
 - **Read-only.** Showing a reminder marks nothing delivered and sends no heartbeat, so its email still goes out until you `mokkan ack` it. Plain pushes are never shown. Every open shell prints the reminders once, and again when the set changes.
@@ -8,6 +8,8 @@
 - **Settings and switches.** `~/.config/mokkan/config.json` holds `shell`, `desktop`, `osc` and `interval`; `mokkan notify on|off [shell|desktop|osc]` flips them and `MOKKAN_NOTIFY=0` turns everything off. `mokkan notify status`, `test` and `doctor` show what is set up, send a test notification and print details for a bug report; `mokkan notify remove` takes it all out; `mokkan shell init zsh|bash|fish` prints the hook for dotfiles you manage yourself.
 - `mokkan logout`, an expired session and `mokkan delete-account` also delete the reminder text kept for notifications. `CONTRIBUTING.md` explains how to add a shell, a desktop notifier or a background agent.
 - **The pane raises a native notification too.** When the open pane finds a timed reminder due, it still shows the 15-second toast, and on Claude Code 2.1.295 or later it also sends a notification through your Claude Code notification setting (`preferredNotifChannel`: iTerm2, kitty, Ghostty or the terminal bell), so you see it with the terminal behind another window. With no channel set up for your terminal, or on an older Claude Code, you get only the toast.
+- **The pane polls more gently.** It syncs 15 seconds after the last sync lands, so a slow server never gets two polls at once, and after a failure it waits longer each time, up to 60 seconds; a good sync resets it. It writes the last list to the plugin's store only when the list changed (and every 10 minutes), not every 15 seconds. After Esc, typing in the prompt makes no calls for the pane. Its help (`h`) says how to get notifications outside Claude Code, and so does the plugin's install section in the README.
+- **CI checks the mod.** It type-checks the pane and runs its tests with `claude plugin test`, on a pinned Claude Code version.
 - No server change.
 
 ## 0.7.0

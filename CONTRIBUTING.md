@@ -22,6 +22,8 @@ npm run typecheck
 npm run bundle         # rebuilds claude-plugin/scripts/mokkan.mjs
 ```
 
+If you change the Claude Code plugin (`claude-plugin/`), also run `npm run typecheck:plugin` and `npm run test:plugin` (the second needs `claude` on your PATH).
+
 The plugin's bundled CLI (`claude-plugin/scripts/mokkan.mjs`) is committed, because Claude Code installs plugins straight from git. Any change under `src/` changes the bundle, so run `npm run bundle` and commit the result; a test fails when the committed bundle is stale.
 
 Keep the README in step with what the code does. Write it in plain, short sentences.

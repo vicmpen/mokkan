@@ -434,6 +434,7 @@ const HELP_TEXT = [
   'A todo costs 1 credit. A reminder costs 1, plus 1 held for its email and given back if you ack it first. Every 3rd edit costs 1; the rest is free.',
   'b opens Stripe Checkout to add credits. In a terminal, mokkan ui opens this full screen.',
   'f sends feedback to the mokkan developer, free; shift+enter starts a new line.',
+  'To see reminders when Claude Code is closed, at your shell prompt and on your desktop, run npm i -g @vicmpen/mokkan-cli, then mokkan notify setup, in a terminal.',
   'Privacy policy: mokkan.dev/privacy. To delete your account and everything on it, run mokkan delete-account in a terminal (or npx @vicmpen/mokkan-cli delete-account).',
 ]
 /** Under the acceptance view: the pane can't delete an account, so it names the terminal command, both ways (the pane's own CLI is never the one on PATH). */
