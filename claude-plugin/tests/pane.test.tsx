@@ -37,7 +37,8 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: NOW })
   // $.store, kept here so a test can look at it.
   on('store.get', (_, e) => ({ value: store[e.key] }))
-  on('store.set', (_, e) => { store[e.key] = JSON.parse(JSON.stringify(e.value)); return { value: undefined } })
+  let sets = 0
+  on('store.set', (_, e) => { sets++; store[e.key] = JSON.parse(JSON.stringify(e.value)); return { value: undefined } })
   on('store.delete', (_, e) => { delete store[e.key]; return { value: undefined } })
   const panes: { id: string }[] = []
   const opens: Record<string, unknown>[] = []
@@ -106,7 +107,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
     if (cmd === 'push') stack.unshift(row(`f6f6f6f6-0000-4000-8000-${String(stack.length).padStart(12, '0')}`, e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, store, listed: () => listed, envs, clock, toasts, toastMs, notified, commands, panes, opens, stats: () => stats }
+  return { ran, session, store, sets: () => sets, listed: () => listed, envs, clock, toasts, toastMs, notified, commands, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -729,6 +730,64 @@ test('the 15-second timer refreshes only while the pane is open', async ($, on) 
   expect(lists()).toBe(4)
 })
 
+test('the poll waits for each refresh to land before the next: a slow sync never overlaps the poll', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  const syncs = () => ran.filter(a => a[2] === 'sync').length
+  await opened($, clock)
+  expect(syncs()).toBe(1)
+  session.slow.sync = 20_000 // slower than the poll's period
+  await clock.advance(15_000)
+  expect(syncs()).toBe(2)
+  await clock.advance(15_000) // the second is still running: no third
+  expect(syncs()).toBe(2)
+  session.slow.sync = 0
+  await clock.advance(5_000) // it lands at 35 s; the next waits 15 s from there
+  await clock.advance(14_999)
+  expect(syncs()).toBe(2)
+  await clock.advance(1)
+  expect(syncs()).toBe(3)
+})
+
+test('offline, the poll backs off 15, 30, 60, 60 s; one good sync puts it back to 15 s; a manual sync moves it on', async ($, on) => {
+  const { ran, session, clock } = fakeCli(on)
+  const syncs = () => ran.filter(a => a[2] === 'sync').length
+  session.offline = true
+  await opened($, clock) // fails: the next waits 30 s
+  for (const gap of [30_000, 60_000, 60_000]) {
+    const n = syncs()
+    await clock.advance(gap - 1)
+    expect(syncs()).toBe(n)
+    await clock.advance(1)
+    expect(syncs()).toBe(n + 1)
+  }
+  session.offline = false
+  await clock.advance(60_000) // good: back to 15 s
+  const n = syncs()
+  await clock.advance(15_000)
+  expect(syncs()).toBe(n + 1)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await clock.advance(10_000)
+  await ui.press({ key: 'refresh' }) // the poll's next is 15 s from this one
+  await clock.advance(14_999)
+  expect(syncs()).toBe(n + 2)
+  await clock.advance(1)
+  expect(syncs()).toBe(n + 3)
+  await ui.unmount()
+})
+
+test('a list that did not change is not written to the store again until ten minutes on', async ($, on) => {
+  const { session, clock, sets: writes } = fakeCli(on)
+  await opened($, clock)
+  expect(writes()).toBe(1)
+  await clock.advance(5 * 60_000) // 20 polls, the list as it was
+  expect(writes()).toBe(1)
+  session.stack = [row(B, 'call the bank', 'delivered', -40)]
+  await clock.advance(15_000)
+  expect(writes()).toBe(2)
+  await clock.advance(10 * 60_000)
+  expect(writes()).toBe(3)
+})
+
 test('the pane paints the last good list from the store at once, and stores each good one; logged out clears it', async ($, on) => {
   const cached = { reminders: [row(C, 'cached one', 'due', -5)], done: [], balance: 70, failure: null, fetchedAt: NOW - 3_600_000 }
   const { session, store, clock } = fakeCli(on, { view: cached })
@@ -1093,9 +1152,28 @@ test('a key no Button binds, typed while the pane holds the keys, is dropped and
 
   // A closed pane never takes a key, nor reopens.
   await ui.redraw({ ...PANE.props, isFocused: true })
-  panes.length = 0
+  await $.command.run({ command: 'mokkan:mokkan', args: '', ...RUN }) // closes it
+  expect(panes).toEqual([])
+  opens.length = 0
   expect(await type('f')).toEqual({ text: 'f', cursor: 1 })
   expect(opens).toEqual([])
+})
+
+test('after Esc, keys typed past 100 ms are the prompt\'s, with no call to the engine for the pane', async ($, on) => {
+  const { clock, listed, opens } = fakeCli(on)
+  on('prompt.edit', (_, e) => ({ text: e.inputText, cursor: 1 }))
+  await opened($, clock)
+  const edit = ($ as unknown as { prompt: { edit: (e: PromptEditInput) => Promise<PromptEditResult> } }).prompt.edit
+  const type = (key: string) => edit({ origin: { kind: 'composer' }, key: { key }, text: '', cursor: 0, start: 0, end: 0, inputText: key })
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  await ui.redraw({ ...PANE.props, isFocused: false }) // Esc
+  await clock.advance(1000)
+  const before = listed()
+  opens.length = 0
+  for (const k of 'abcdef') expect(await type(k)).toEqual({ text: k, cursor: 1 })
+  expect(listed()).toBe(before)
+  expect(opens).toEqual([])
+  await ui.unmount()
 })
 
 test('a key typed while the pane never held the keys, or since it closed, costs no call to the engine', async ($, on) => {

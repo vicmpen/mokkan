@@ -6,6 +6,10 @@ import type { MokkanMessage, MokkanMode, MokkanPolicy, MokkanReminder, MokkanTab
 const PANE = 'mokkan'
 const COLUMNS = 44
 const REFRESH_MS = 15_000
+/** The longest wait between polls: a failed one doubles the wait from REFRESH_MS up to this, a good one resets it. */
+const BACKOFF_MS = 60_000
+/** The stored list is rewritten when it changes, and at least this often, so its `synced` time is never far off. */
+const STORE_MS = 10 * 60_000
 const MESSAGE_MS = 15_000
 const EMPTY: MokkanView = { reminders: [], done: [], balance: null, failure: null, fetchedAt: null }
 const NORMAL: MokkanMode = { kind: 'normal' }
@@ -44,8 +48,14 @@ let said = 0
 let pending: { digit: number; at: number } | null = null
 /** True from the pane's opening to its first good list, which picks the tab it opens on. */
 let landing = false
-/** The poll that refreshes the pane every REFRESH_MS: running from the pane's opening to its closing. */
+/** True from the pane's opening (or a hot reload that finds it open) to its closing: the poll runs, and a key can leak. */
+let shown = false
+/** The poll's next refresh, armed when the one before lands: one at a time, never overlapping. */
 let poll: Timer | null = null
+/** How long the next poll waits: REFRESH_MS, doubled after each failed refresh up to BACKOFF_MS. */
+let wait = REFRESH_MS
+/** When this module last wrote the list to `$.store`. */
+let storedAt = 0
 /** The CLI's argv, looked up once per load of this module. */
 let resolved: Promise<string[]> | null = null
 /** Whether the pane held the keys at its last draw, and when a draw last saw it let them go: a key no Button binds leaves the pane and reaches the prompt around that redraw, just before or just after it. */
@@ -149,6 +159,10 @@ const pick = (r: MokkanReminder): MokkanReminder => ({
 
 async function refresh($: EngineInterface): Promise<void> {
   const mine = ++seq
+  // This refresh stands for the poll's next one: the poll is armed again when it lands.
+  poll?.cancel()
+  poll = null
+  let failed = true
   await update($, syncing, () => true)
   try {
     // One process for the whole look: the list, the history, the balance and a heartbeat (which makes an open pane
@@ -158,6 +172,7 @@ async function refresh($: EngineInterface): Promise<void> {
     const got = sync.ok ? json<{ reminders: MokkanReminder[]; done: MokkanReminder[] | null; balance: number | null; delivered: string[] | null }>(sync.out) : null
     // The policy to accept (run showed it): the account and its list stand, so the cached list stays for after.
     if (sync.code === PRIVACY_REQUIRED) return
+    failed = !got
     const before = await read($, view)
     let next: MokkanView = got
       ? {
@@ -186,9 +201,13 @@ async function refresh($: EngineInterface): Promise<void> {
     }
     await update($, view, () => next)
     if (got || next.failure?.kind === 'loggedOut') await update($, privacy, () => null)
-    // The last good list paints the pane at once the next time it opens, in this session or another.
-    if (got) await $.store.set('view', next)
-    else if (next.failure?.kind === 'loggedOut') await $.store.delete('view')
+    // The last good list paints the pane at once the next time it opens, in this session or another: written when it
+    // changed, or now and then for its `synced` time, not at every poll.
+    const now = await $.clock.now()
+    if (got && (!sameList(before, next) || now - storedAt >= STORE_MS)) {
+      await $.store.set('view', next)
+      storedAt = now
+    } else if (next.failure?.kind === 'loggedOut') await $.store.delete('view')
     // It opens on Reminders while one is due, else on TODOs.
     if (got && landing) {
       landing = false
@@ -198,9 +217,17 @@ async function refresh($: EngineInterface): Promise<void> {
     const [sel, tb] = await Promise.all([read($, selected), read($, tab)])
     if (sel !== null && !rowsOf(next, tb).some(r => r.id === sel)) await update($, selected, () => null)
   } finally {
-    if (mine === seq) await update($, syncing, () => false)
+    if (mine === seq) {
+      wait = failed ? Math.min(wait * 2, BACKOFF_MS) : REFRESH_MS
+      arm($)
+      await update($, syncing, () => false)
+    }
   }
 }
+
+/** The list, the history and the balance alike: what the pane shows of a sync, its time aside. */
+const sameList = (a: MokkanView, b: MokkanView) =>
+  a.balance === b.balance && JSON.stringify([a.reminders, a.done]) === JSON.stringify([b.reminders, b.done])
 
 /**
  * A native notification through the user's own notification channel (Claude Code 2.1.295+), which reaches a terminal
@@ -229,9 +256,22 @@ async function paintCached($: EngineInterface): Promise<void> {
   await land($, cached)
 }
 
-/** Refreshes every REFRESH_MS while the pane is open; `ui.close` stops it. */
+/** Refreshes `wait` after the last refresh lands, while the pane is open; `ui.close` stops it. */
 function startPoll($: EngineInterface): void {
-  poll ??= $.clock.every(REFRESH_MS, () => void refresh($))
+  shown = true
+  if (!poll) arm($)
+}
+
+function arm($: EngineInterface): void {
+  poll?.cancel()
+  poll = shown ? $.clock.after(wait, () => { poll = null; void refresh($) }) : null
+}
+
+function stopPoll(): void {
+  shown = false
+  poll?.cancel()
+  poll = null
+  wait = REFRESH_MS
 }
 
 async function say($: EngineInterface, text: string, tone: NonNullable<MokkanMessage>['tone'] = 'ok'): Promise<void> {
@@ -414,8 +454,7 @@ export const register: Register = on => {
 
   // Closed by /mokkan, by the person or by an unload: nothing polls, and no key is taken for it.
   on('ui.close', { id: PANE }, ($, e, next) => {
-    poll?.cancel()
-    poll = null
+    stopPoll()
     heldKeys = false
     lostAt = 0
     return next(e)
@@ -466,9 +505,13 @@ export const register: Register = on => {
     // Most keys never had the pane hold them: they reach the prompt with no call to the engine.
     if (!heldKeys && lostAt === 0) return next(e)
     if (e.key === undefined || e.key.ctrl || e.key.meta || [...e.inputText].length !== 1) return next(e)
-    const [panes, now] = await Promise.all([$.ui.panes(), $.clock.now()])
-    const leaked = panes.some(p => p.id === PANE) && (heldKeys || (lostAt > 0 && now - lostAt < LEAK_MS))
-    if (!leaked) return next(e)
+    // `shown` says the pane is open (ui.close clears it) with no call to the engine; only a key just past Esc reads the clock.
+    if (!shown) return next(e)
+    if (!heldKeys && (await $.clock.now()) - lostAt >= LEAK_MS) {
+      // The Esc is over: from here keys go straight to the prompt again.
+      lostAt = 0
+      return next(e)
+    }
     void $.ui.open({ id: PANE, title: 'mokkan', columns: COLUMNS, focus: true })
     return { text: e.text, cursor: e.cursor }
   })
