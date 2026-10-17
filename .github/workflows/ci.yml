@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Claude Code that validates and tests the plugin: bumped on purpose, with tools/claude-code-types refreshed from it.
+  CLAUDE_CODE_VERSION: 2.1.296
+
 # Actions are pinned to commit SHAs (the tag each one had when pinned is in the comment).
 jobs:
   test:
@@ -28,12 +32,16 @@ jobs:
       - run: npm run build
       - name: npm package contents
         run: npm pack --dry-run
+      - name: Plugin types
+        # Against the committed snapshot of the pinned version's declarations (tools/claude-code-types).
+        run: npm run typecheck:plugin
       - name: claude plugin validate
-        # Best effort: needs the Claude Code CLI from npm; the manifests are also checked by test/plugin.test.ts.
-        continue-on-error: true
         run: |
-          npx -y @anthropic-ai/claude-code plugin validate --strict .
-          npx -y @anthropic-ai/claude-code plugin validate --strict claude-plugin
+          npx -y "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" plugin validate --strict .
+          npx -y "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" plugin validate --strict claude-plugin
+      - name: claude plugin test
+        # The pane's own suite (claude-plugin/tests): no session, sign-in or network.
+        run: npx -y "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" plugin test claude-plugin
 
   # The prompt hook in macOS's own shells: /bin/bash 3.2, Homebrew's bash on PATH, and zsh.
   macos-shells:

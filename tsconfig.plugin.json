@@ -1,0 +1,20 @@
+{
+  // The plugin against the committed snapshot of the Claude Code types (tools/claude-code-types, the version CI
+  // pins), not the copy the engine writes beside the plugin for whatever build loaded it last.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
+    "typeRoots": ["tools/claude-code-types"],
+    "types": ["claude-code", "claude-code-tools", "claude-code-mcp"]
+  },
+  "include": ["claude-plugin/hooks", "claude-plugin/types", "claude-plugin/tests"]
+}

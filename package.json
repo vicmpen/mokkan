@@ -50,8 +50,9 @@
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:plugin": "tsc -p tsconfig.plugin.json",
     "prepublishOnly": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && npm run typecheck && npm test && npm run check:bundle",
-    "test:plugin": "claude plugin validate claude-plugin && claude plugin test claude-plugin"
+    "test:plugin": "claude plugin validate --strict claude-plugin && claude plugin test claude-plugin"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
