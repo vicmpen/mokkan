@@ -2860,7 +2860,7 @@ import { hostname as osHostname } from "node:os";
 import path18 from "node:path";
 
 // src/version.ts
-var VERSION = "0.7.0";
+var VERSION = "0.8.0";
 
 // src/notify/agents/launchd.ts
 import path6 from "node:path";
