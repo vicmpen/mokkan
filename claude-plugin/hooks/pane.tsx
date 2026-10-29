@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, Timer } from 'claude-code'
+import type { EngineInterface, PromptAutocompleteSuggestion, Register, Timer } from 'claude-code'
 
 import type { MokkanMessage, MokkanMode, MokkanPolicy, MokkanReminder, MokkanTab, MokkanView } from '../types'
 
@@ -117,15 +117,58 @@ async function gate($: EngineInterface): Promise<void> {
   await update($, help, () => false)
 }
 
-/** `/mokkan <words>`: the CLI's own text, as the slash command shows it (`--exit-zero` puts its errors on stdout too). */
-async function runLine($: EngineInterface, line: string): Promise<string> {
+/** The CLI's own text, as `/mokkan` and Claude's tool show it (`--exit-zero` puts its errors on stdout too). */
+async function runText($: EngineInterface, args: string[]): Promise<string> {
   try {
-    const { stdout } = await $.process.run([...(await cli($)), '--argline', line, '--exit-zero'], { timeoutMs: 15_000 })
+    const { stdout } = await $.process.run([...(await cli($)), ...args], { timeoutMs: 15_000 })
     return stdout.trim() || 'No output from mokkan.'
   } catch (err) {
     return `mokkan failed: ${err instanceof Error ? err.message : String(err)}`
   }
 }
+
+/** `/mokkan <words>`: the words as typed, split by the CLI (`--argline` comes first). */
+const runLine = ($: EngineInterface, line: string) => runText($, ['--argline', line, '--exit-zero'])
+
+/** Claude's tool, `mcp__mokkan__mokkan`: its arguments reach the CLI as argv, never through a shell. */
+const TOOL = 'mokkan'
+/** The verbs Claude may run; the rest are the person's own (`/mokkan <verb>`, the pane or a terminal). */
+const TOOL_VERBS = ['list', 'push', 'in', 'edit', 'ack', 'done', 'undone', 'pending', 'pop', 'dequeue', 'status', 'balance', 'notify']
+/** `notify setup` and `remove` edit the shell config and `poll` is the background agent's: a terminal's, never Claude's. */
+const TOOL_NOTIFY = ['status', 'test', 'doctor', 'on', 'off']
+const TOOL_SPEC = {
+  name: TOOL,
+  description: [
+    'mokkan: the user\'s cross-session todos and reminders. Runs one mokkan command and returns its output; show it to the user verbatim, ids in square brackets included, and do not retry a command that failed.',
+    'push <text> adds a todo (1 credit). in <duration> <text> schedules a reminder (2h, 1d30m). edit <n|id> [--in <duration> | --at <iso> | --clear-due] [new text] changes one, every change to it in one call (every 3rd edit costs 1 credit); --all numbers by `list --all`. ack <id|all> silences a due one, done <id>... archives, undone <id>... reopens. list [--all], pending, status and balance read. notify status|test|doctor|on|off [shell|desktop|osc].',
+    'Pass reminder text as one element of args. buy, logout, login, register, accept, delete-account, feedback, ui and notify setup/remove are the user\'s alone: tell them to type /mokkan <command> (accept, delete-account and notify setup/remove: mokkan <command> in a terminal). If the output says "Not enough credits", tell the user to type /mokkan buy.',
+  ].join('\n'),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', enum: TOOL_VERBS },
+      args: { type: 'array', items: { type: 'string' }, description: 'The command\'s arguments, e.g. ["2h", "call the bank"] for in, ["3", "--in", "1h"] for edit.' },
+    },
+    required: ['command'],
+    additionalProperties: false,
+  },
+  isDeferred: true,
+}
+
+/** Why Claude's tool won't run `command args`, or null when it may. */
+function refusal(command: unknown, args: string[]): string | null {
+  if (typeof command !== 'string' || !TOOL_VERBS.includes(command)) {
+    const verb = typeof command === 'string' ? command : ''
+    if (verb === 'accept' || verb === 'delete-account') return `Only the user runs mokkan ${verb}, in a terminal (or npx @vicmpen/mokkan-cli ${verb}).`
+    if (TERMINAL_ONLY[verb]) return TERMINAL_ONLY[verb]!
+    return `Claude does not run mokkan ${verb || '(no command)'}: ask the user to type /mokkan ${verb || '<command>'} themselves.`
+  }
+  if (command === 'notify' && !TOOL_NOTIFY.includes(args[0] ?? 'status')) return `mokkan notify ${args[0]} runs only in a terminal: ask the user to run it there.`
+  return null
+}
+
+/** `mokkan accept` or `delete-account` in a command line: `mokkan`, a path to it or `mokkan-cli[@version]`, flags, then the verb. */
+const OWN_VERB = /(?:^|[\s/])mokkan(?:-cli)?(?:@\S*)?\s+(?:-\S+\s+)*(accept|delete-account)\b/
 
 /** Verbs that need a terminal of their own: `/mokkan` says where to run them instead. */
 const TERMINAL_ONLY: Record<string, string> = {
@@ -134,6 +177,16 @@ const TERMINAL_ONLY: Record<string, string> = {
   login: 'Log in from the pane (/mokkan, then l), or run mokkan login in a terminal.',
   register: 'Register from the pane (/mokkan, then r), or run mokkan register in a terminal.',
 }
+
+/** What `/mokkan ` offers as its first word, with a line on each. */
+const VERBS: [string, string][] = [
+  ['list', 'the stack; --all adds scheduled ones'], ['push', 'push <text>: a todo · 1 credit'], ['in', 'in <duration> <text>: a reminder'],
+  ['edit', 'edit <n|id> [--in 2h | --clear-due] [new text]'], ['ack', 'ack <id|all>: silence a due one'], ['done', 'done <id>...: archive'],
+  ['undone', 'undone <id>...: reopen'], ['pending', 'what is due and not yet shown'], ['status', 'the account'], ['balance', 'credits and history'],
+  ['buy', 'add credits: Stripe Checkout'], ['notify', 'notify status|test|doctor|on|off'], ['logout', 'log out here'],
+]
+/** The verbs whose arguments are rows: offered by their text, written as their ids. */
+const ROW_VERBS = ['edit', 'ack', 'done', 'undone']
 
 const firstLine = (out: string) => out.split('\n')[0] ?? ''
 /**
@@ -157,13 +210,14 @@ const pick = (r: MokkanReminder): MokkanReminder => ({
   created_at: r.created_at, delivered_at: r.delivered_at ?? null, acknowledged_at: r.acknowledged_at ?? null, done_at: r.done_at ?? null,
 })
 
-async function refresh($: EngineInterface): Promise<void> {
+/** `quiet`: the poll's own, which shows no `syncing…` (none other is running then: each cancels the poll until it lands). */
+async function refresh($: EngineInterface, quiet = false): Promise<void> {
   const mine = ++seq
   // This refresh stands for the poll's next one: the poll is armed again when it lands.
   poll?.cancel()
   poll = null
   let failed = true
-  await update($, syncing, () => true)
+  if (!quiet) await update($, syncing, () => true)
   try {
     // One process for the whole look: the list, the history, the balance and a heartbeat (which makes an open pane
     // an active session: the server then waits for it to show what comes due), and delivering what is due.
@@ -220,7 +274,7 @@ async function refresh($: EngineInterface): Promise<void> {
     if (mine === seq) {
       wait = failed ? Math.min(wait * 2, BACKOFF_MS) : REFRESH_MS
       arm($)
-      await update($, syncing, () => false)
+      if (!quiet) await update($, syncing, () => false)
     }
   }
 }
@@ -264,7 +318,7 @@ function startPoll($: EngineInterface): void {
 
 function arm($: EngineInterface): void {
   poll?.cancel()
-  poll = shown ? $.clock.after(wait, () => { poll = null; void refresh($) }) : null
+  poll = shown ? $.clock.after(wait, () => { poll = null; void refresh($, true) }) : null
 }
 
 function stopPoll(): void {
@@ -447,10 +501,50 @@ export const register: Register = on => {
   // The password as typed, in this module alone: never in $.state, never drawn, cleared after each attempt.
   let secret = ''
 
-  // A hot reload cancels the poll but leaves the pane open: start it again.
+  // A hot reload cancels the poll but leaves the pane open: start it again. Claude's tool is (re)registered here, the
+  // first moment the session takes one.
   on('session.start', async ($, e, next) => {
+    await $.tool.register(TOOL_SPEC).catch(() => {})
     if ((await $.ui.panes()).some(p => p.id === PANE)) startPoll($)
     return next(e)
+  })
+
+  // Claude's tool: the command and its arguments as argv, so no shell reads the reminder's text; what only the
+  // person runs is refused here, whatever the model was told.
+  on('tool.call', { tool: 'mcp__mokkan__mokkan' }, async ($, e) => {
+    const input = e as { command?: unknown; args?: unknown }
+    const args = Array.isArray(input.args) ? input.args.map(String) : []
+    const no = refusal(input.command, args)
+    if (no) return { deny: no }
+    const result = await runText($, ['--exit-zero', String(input.command), ...args])
+    if (shown) void refresh($)
+    return { result }
+  })
+
+  // The same two through Bash (the mokkan-cli skill's road, or npx): refused at the code level too, not only in the skill.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
+    const verb = OWN_VERB.exec(e.command)?.[1]
+    return verb ? { deny: refusal(verb, [])! } : next(e)
+  })
+
+  // `/mokkan ` then a word: the verbs, and after edit, ack, done or undone the rows, from the list already in memory.
+  on('prompt.autocomplete', async ($, e, next) => {
+    const words = /^\s*\/(?:mokkan:)?mokkan\s+(?:(\S+)\s+)?$/.exec(e.text.slice(0, e.start))
+    if (!words) return next(e)
+    const token = e.token.toLowerCase()
+    const verb = words[1]
+    let mine: PromptAutocompleteSuggestion[] = []
+    if (verb === undefined) mine = VERBS.filter(([w]) => w.startsWith(token) && w !== token).map(([text, description]) => ({ text, description }))
+    else if (ROW_VERBS.includes(verb)) {
+      const [v, now] = await Promise.all([read($, view), $.clock.now()])
+      const rows = verb === 'undone' ? v.done : v.reminders
+      mine = rows
+        .filter(r => r.id.startsWith(token) || r.text.toLowerCase().includes(token))
+        .slice(0, 8)
+        .map(r => ({ text: r.id, label: fit(r.text, 48), description: r.state === 'done' ? 'archived' : r.due_at === null ? 'todo' : when(r, now) || r.state }))
+    }
+    if (mine.length === 0) return next(e)
+    return { suggestions: [...(await next(e)).suggestions, ...mine] }
   })
 
   // Closed by /mokkan, by the person or by an unload: nothing polls, and no key is taken for it.
@@ -819,11 +913,11 @@ export const register: Register = on => {
         {...(framed ? { borderStyle: 'round', borderColor: focused ? FOCUS_BORDER : 'gray', borderDimColor: !focused } : {})}>
         {/* ` mokkan · 42 credits`, the views, a rule; the sync state sits at the bottom, clear of the engine's close mark. */}
         <Box>
-          <Text bold> mokkan</Text>
+          <Text weight="semibold"> mokkan</Text>
           {!loggedOut && <Text color={v.balance === null || v.balance >= 10 ? undefined : v.balance <= 0 ? 'red' : 'yellow'} dimColor={v.balance === null || v.balance >= 10}>{balance}</Text>}
         </Box>
-        {helping && <Text bold> Help</Text>}
-        {gated && <Text bold> Privacy policy updated</Text>}
+        {helping && <Text weight="semibold"> Help</Text>}
+        {gated && <Text weight="semibold"> Privacy policy updated</Text>}
         {!loggedOut && !helping && !gated && (
           <Box>
             <Text> </Text>
@@ -896,18 +990,19 @@ export const register: Register = on => {
               const [text = '', ...more] = isSel ? wrap(r.text, room, Math.max(4, width - lead)) : [fit(r.text, room)]
               // No gap when an untimed row's text fills the width: one more cell would wrap the row.
               const gap = Math.max(time ? 1 : 0, width - lead - wide(text) - wide(time))
+              const strong = isSel ? 'semibold' : 'regular'
               return (
                 <Box key={r.id} flexDirection="column">
                   <Box>
-                    <Text bold={isSel}>{isSel ? '▸ ' : '  '}</Text>
-                    <Text bold={isSel} color={kind(r)} dimColor={settled && !isSel}>{`${glyph} `}</Text>
+                    <Text weight={strong}>{isSel ? '▸ ' : '  '}</Text>
+                    <Text weight={strong} color={kind(r)} dimColor={settled && !isSel}>{`${glyph} `}</Text>
                     {/* 1–9 are the Button's own hotkeys; 10+ draw their number, typed as two digits. */}
-                    {n <= 9 ? digits > 1 && <Text>{' '.repeat(digits - 1)}</Text> : <Text bold={isSel}>{`${String(n).padStart(digits)}: `}</Text>}
+                    {n <= 9 ? digits > 1 && <Text>{' '.repeat(digits - 1)}</Text> : <Text weight={strong}>{`${String(n).padStart(digits)}: `}</Text>}
                     <Button key={`row-${r.id}`} plain hotkey={n <= 9 ? String(n) : undefined} dimColor={(r.state === 'acknowledged' || r.state === 'done') && !isSel} onPress={go(() => (n <= 9 ? typed(n) : press(r)))}>
                       {text}
                     </Button>
                     {gap > 0 && <Text>{' '.repeat(gap)}</Text>}
-                    {time && <Text bold={isSel} color={time.startsWith('overdue') ? 'red' : undefined} dimColor={!time.startsWith('overdue') && !isSel}>{time}</Text>}
+                    {time && <Text weight={strong} color={time.startsWith('overdue') ? 'red' : undefined} dimColor={!time.startsWith('overdue') && !isSel}>{time}</Text>}
                   </Box>
                   {more.map((line, j) => <Text key={`more-${j}`}>{`${' '.repeat(lead)}${line}`}</Text>)}
                   {isSel && detail(r, now, width - lead).map((line, j) => <Text key={`detail-${j}`} dimColor>{`${' '.repeat(lead)}${fit(line, width - lead)}`}</Text>)}

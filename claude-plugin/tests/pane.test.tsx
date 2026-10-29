@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
-import type { On, PromptEditInput, PromptEditResult } from 'claude-code'
+import type { On, PromptAutocompleteInput, PromptAutocompleteResult, PromptEditInput, PromptEditResult } from 'claude-code'
 
 const NOW = Date.parse('2026-10-02T12:00:00Z')
 const at = (mins: number) => new Date(NOW + mins * 60_000).toISOString()
@@ -46,6 +46,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
   const toastMs: (number | undefined)[] = []
   const notified: { text: string; title?: string }[] = []
   const commands: Record<string, unknown>[] = []
+  const tools: Record<string, unknown>[] = []
   let stats = 0
   on('ui.open', (_, e) => { opens.push({ ...e }); if (!panes.some(p => p.id === e.id)) panes.push({ id: e.id }); return { value: { isPlaced: true } } })
   let listed = 0
@@ -58,6 +59,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
   })
   on('ui.focus', () => ({}))
   on('command.register', (_, e) => { commands.push({ ...e }); return { value: { command: e.name } } })
+  on('tool.register', (_, e) => { tools.push({ ...e }); return { value: { tool: `mcp__mokkan__${e.name}` } } })
   on('ui.close', (_, e) => { panes.splice(panes.findIndex(p => p.id === e.id) >>> 0, 1); return { value: undefined } })
   on('fs.stat', () => { stats++; return { value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } } })
   const ran: string[][] = []
@@ -68,6 +70,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
     envs.push(e.init?.env ?? {})
     const cmd = e.argv[2] ?? ''
     if (cmd === '--argline') return OK(`mokkan said: ${e.argv[3]}\n`)
+    if (cmd === '--exit-zero') return OK(`mokkan ran: ${JSON.stringify(e.argv.slice(3))}\n`)
     const stack = session.stack
     if (session.slow[cmd]) await clock.sleep(session.slow[cmd]!)
     if (session.fail[cmd]) return result(1, '', `${session.fail[cmd]}\n`)
@@ -107,7 +110,7 @@ function fakeCli(on: On, store: Record<string, unknown> = {}) {
     if (cmd === 'push') stack.unshift(row(`f6f6f6f6-0000-4000-8000-${String(stack.length).padStart(12, '0')}`, e.argv[3] ?? '', 'due', null))
     return OK(JSON.stringify({ version: 2 }))
   })
-  return { ran, session, store, sets: () => sets, listed: () => listed, envs, clock, toasts, toastMs, notified, commands, panes, opens, stats: () => stats }
+  return { ran, session, store, sets: () => sets, listed: () => listed, envs, clock, toasts, toastMs, notified, commands, tools, panes, opens, stats: () => stats }
 }
 
 type Found = { text: string; props: Record<string, unknown> }
@@ -748,6 +751,24 @@ test('the poll waits for each refresh to land before the next: a slow sync never
   expect(syncs()).toBe(3)
 })
 
+test('a poll syncs quietly; a sync asked for shows syncing… until it lands', async ($, on) => {
+  const { session, clock } = fakeCli(on)
+  await opened($, clock)
+  const ui = await $.ui.mount({ plugin: 'mokkan', surface: 'terminal', ...PANE })
+  session.slow.sync = 2000
+  await clock.advance(15_000) // the poll's, still running
+  expect(await shows(ui, 'syncing…')).toBe(false)
+  await clock.advance(2000)
+  const asked = ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await shows(ui, 'syncing…')).toBe(true)
+  await clock.advance(2000)
+  await asked
+  expect(await shows(ui, 'syncing…')).toBe(false)
+  expect(await shows(ui, /^ synced \d\d:\d\d$/)).toBe(true)
+  await ui.unmount()
+})
+
 test('offline, the poll backs off 15, 30, 60, 60 s; one good sync puts it back to 15 s; a manual sync moves it on', async ($, on) => {
   const { ran, session, clock } = fakeCli(on)
   const syncs = () => ran.filter(a => a[2] === 'sync').length
@@ -883,6 +904,84 @@ test('/mokkan alone toggles the pane; with a verb it runs the CLI and shows its 
   expect(await mokkan('ui')).toMatch(/run it in a terminal/)
   expect(await mokkan('login vic@example.com')).toMatch(/from the pane/)
   expect(ran.length).toBe(before)
+})
+
+test('Claude gets a deferred tool that runs mokkan as argv, no shell: the text arrives as typed', async ($, on) => {
+  const { ran, tools, clock } = fakeCli(on)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  expect(tools).toEqual([expect.objectContaining({ name: 'mokkan', isDeferred: true })])
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__mokkan__mokkan', ...input } as Parameters<typeof $.tool.call>[0])
+
+  const text = 'say "hi" to $USER `now` $(whoami) --at 5'
+  expect(await call({ command: 'in', args: ['2h', text] })).toMatchObject({ result: `mokkan ran: ${JSON.stringify(['in', '2h', text])}` })
+  // --exit-zero comes first, so nothing in the arguments (a `--`, say) can turn it into text.
+  expect(ran.at(-1)?.slice(2)).toEqual(['--exit-zero', 'in', '2h', text])
+  expect(await call({ command: 'list' })).toMatchObject({ result: 'mokkan ran: ["list"]' })
+  expect(await call({ command: 'notify', args: ['on', 'desktop'] })).toMatchObject({ result: expect.stringContaining('notify') })
+
+  // An open pane picks up what the tool changed; a closed one is not woken.
+  const syncs = () => ran.filter(a => a[2] === 'sync').length
+  await clock.settle()
+  expect(syncs()).toBe(0)
+  await opened($, clock)
+  await call({ command: 'ack', args: ['all'] })
+  await clock.settle()
+  expect(syncs()).toBe(2)
+})
+
+test('the tool refuses what only the person runs, and runs nothing for it', async ($, on) => {
+  const { ran } = fakeCli(on)
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const call = (input: Record<string, unknown>) => $.tool.call({ tool: 'mcp__mokkan__mokkan', ...input } as Parameters<typeof $.tool.call>[0])
+  const before = ran.length
+  expect(await call({ command: 'buy' })).toEqual({ deny: expect.stringContaining('/mokkan buy') })
+  expect(await call({ command: 'logout' })).toEqual({ deny: expect.stringContaining('/mokkan logout') })
+  expect(await call({ command: 'accept', args: ['--yes'] })).toEqual({ deny: expect.stringContaining('in a terminal') })
+  expect(await call({ command: 'delete-account' })).toEqual({ deny: expect.stringContaining('in a terminal') })
+  expect(await call({ command: 'login', args: ['vic@example.com'] })).toEqual({ deny: expect.stringMatching(/from the pane/) })
+  expect(await call({ command: 'notify', args: ['setup'] })).toEqual({ deny: expect.stringContaining('only in a terminal') })
+  expect(await call({ command: 'notify', args: ['poll'] })).toEqual({ deny: expect.stringContaining('only in a terminal') })
+  expect(await call({})).toEqual({ deny: expect.stringContaining('/mokkan <command>') })
+  expect(ran.length).toBe(before)
+})
+
+test('Bash may not run mokkan accept or delete-account either; every other command line goes through', async ($, on) => {
+  fakeCli(on)
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'ran' }))
+  const bash = (command: string) => $.tool.call({ tool: 'Bash', command })
+  for (const line of ['mokkan accept', 'mokkan accept --yes', 'cd ~ && mokkan --json delete-account', '/usr/local/bin/mokkan accept', 'npx -y @vicmpen/mokkan-cli@0.8.0 delete-account'])
+    expect(await bash(line)).toEqual({ deny: expect.stringContaining('in a terminal') })
+  for (const line of ['mokkan list', 'mokkan push "accept the offer"', 'git commit -m "accept"', 'npx @vicmpen/mokkan-cli in 2h call'])
+    expect(await bash(line)).toMatchObject({ result: 'ran' })
+})
+
+test('typing /mokkan offers its verbs, then the rows by their text, written as their ids', async ($, on) => {
+  const { clock } = fakeCli(on)
+  on('prompt.autocomplete', () => ({ suggestions: [] }))
+  // The kit raises prompt.autocomplete, but its Engine type leaves the call out.
+  const complete = ($ as unknown as { prompt: { autocomplete: (e: PromptAutocompleteInput) => Promise<PromptAutocompleteResult> } }).prompt.autocomplete
+  const at = (text: string) => {
+    const start = text.lastIndexOf(' ') + 1
+    return complete({ text, cursor: text.length, token: text.slice(start), start })
+  }
+  const texts = async (text: string) => (await at(text)).suggestions.map(s => s.text)
+
+  expect(await texts('/mokkan e')).toEqual(['edit'])
+  expect(await texts('/mokkan:mokkan un')).toEqual(['undone'])
+  expect(await texts('/mokkan d')).toEqual(['done'])
+  expect(await texts('/mokkan edit')).toEqual([]) // typed whole already
+  expect(await texts('/other e')).toEqual([])
+
+  await opened($, clock)
+  expect(await at('/mokkan done bank')).toEqual({ suggestions: [{ text: B, label: 'call the bank', description: '40m ago' }] })
+  expect(await texts('/mokkan ack a1a1')).toEqual([A])
+  expect(await texts('/mokkan edit the')).toEqual([A, B, D])
+  expect(await texts('/mokkan undone dom')).toEqual([E]) // Archived rows only
+  expect(await texts('/mokkan done dom')).toEqual([])
+  expect(await texts('/mokkan push bank')).toEqual([]) // text, not a row
+  expect(await texts('/mokkan edit 2 the')).toEqual([]) // only the word after the verb
 })
 
 test('a user-level /mokkan, should one exist, is answered by the plugin too', async ($, on) => {

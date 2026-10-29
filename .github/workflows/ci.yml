@@ -10,7 +10,7 @@ permissions:
 
 env:
   # The Claude Code that validates and tests the plugin: bumped on purpose, with tools/claude-code-types refreshed from it.
-  CLAUDE_CODE_VERSION: 2.1.296
+  CLAUDE_CODE_VERSION: 2.1.312
 
 # Actions are pinned to commit SHAs (the tag each one had when pinned is in the comment).
 jobs:

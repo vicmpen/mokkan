@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Claude calls a tool, not a shell.** The plugin's mod registers `mcp__mokkan__mokkan` (behind tool search) and the mokkan skill tells Claude to call it with the command and its arguments. The text reaches the CLI as argv, so quotes, `$`, backticks and `$(…)` in a reminder are kept as typed. The skill has no `!` line and no `allowed-tools` rule any more. The tool refuses `buy`, `logout`, `login`, `register`, `feedback`, `ui`, `accept`, `delete-account` and `notify setup|remove|poll` itself, whatever the model was told; `/mokkan <command>` still runs them when you type it.
+- **`/mokkan` completes in the prompt box.** After `/mokkan ` it offers the commands; after `edit`, `ack`, `done` or `undone` it offers the reminders that match what you typed (by text or id) and writes the id. It reads the list the pane already holds and starts no process.
+- **Claude can't run `accept` or `delete-account` through Bash either.** The mod refuses a Bash command line that runs `mokkan accept` or `mokkan delete-account` (also by path or through `npx @vicmpen/mokkan-cli`), with the same message as the tool.
+- **Background syncs are quiet.** The pane's 15-second poll no longer flashes `syncing…` on the bottom line; a sync you start, opening the pane, or an action still shows it.
+- **Needs Claude Code 2.1.299 or later.** The pane draws its bold text with `Text`'s `weight` instead of the deprecated `bold`, which older Claude Code refuses (the pane isn't drawn). CI now tests the plugin on Claude Code 2.1.312, and `tools/claude-code-types` is that version's snapshot.
+
 ## 0.8.0
 
 - **Notifications outside Claude Code.** `mokkan notify setup`, run in a terminal, shows scheduled reminders that have fired and are not acknowledged at your shell prompt and as desktop notifications. It looks at the system and asks before each step: a prompt hook for zsh, bash (3.2 too) or fish, and a background agent that checks every 60 seconds (launchd on macOS, a systemd user timer on Linux desktops, XDG autostart elsewhere; only the prompt hook on a machine without a desktop). It needs a stable install (`npm i -g @vicmpen/mokkan-cli`), not npx or the plugin's copy.

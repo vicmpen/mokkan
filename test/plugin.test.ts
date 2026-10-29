@@ -11,8 +11,6 @@ const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const PLUGIN = path.join(SKILL_DIR, 'claude-plugin');
 const COMMAND = path.join(SKILL_DIR, 'claude-command', 'mokkan-cli.md');
 const PLUGIN_SKILL = path.join(PLUGIN, 'skills', 'mokkan', 'SKILL.md');
-// Quoted: a plugin root with a space in it (verified live; the rule in allowed-tools must carry the same quotes).
-const PLUGIN_RUN_LINE = '!`node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" --argline "$ARGUMENTS" --exit-zero 2>&1`';
 const PATH_RUN_LINE = '!`mokkan --argline "$ARGUMENTS" --exit-zero 2>&1`';
 /** Splits a Markdown file with YAML frontmatter into its frontmatter lines and its body. */
 const splitFrontmatter = (md: string) => {
@@ -65,22 +63,25 @@ describe('Claude Code plugin files', () => {
     expect(md).toContain('verbatim');
   });
 
-  it('the plugin skill runs the bundled CLI through ${CLAUDE_PLUGIN_ROOT}, pre-approved by the same path', () => {
+  it('the plugin skill runs no shell: Claude calls the pane module\'s tool, which nothing pre-approves', () => {
     const { front, body } = splitFrontmatter(readFileSync(PLUGIN_SKILL, 'utf8'));
     expect(front).toContain('name: mokkan');
     expect(front.find((l) => l.startsWith('description: '))).toMatch(/remind/);
-    expect(front).toContain('allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/mokkan.mjs" *)');
-    expect(body).toContain(PLUGIN_RUN_LINE);
-    expect(body).not.toContain(PATH_RUN_LINE);
+    expect(front.some((l) => l.startsWith('allowed-tools:'))).toBe(false);
+    expect(body).not.toContain('!`');
+    expect(body).toContain('mcp__mokkan__mokkan');
+    expect(body).toContain('verbatim');
   });
 
-  it('the plugin skill and the user-level command give the same instructions', () => {
-    const skill = splitFrontmatter(readFileSync(PLUGIN_SKILL, 'utf8'));
-    const command = splitFrontmatter(readFileSync(COMMAND, 'utf8'));
+  it('the plugin skill and the user-level command give the same advice', () => {
+    // From Notifications on; how each runs mokkan (the plugin's tool, the command's `!` line) differs above it.
+    const advice = (md: string) => { const body = splitFrontmatter(md).body; return body.slice(body.indexOf('## Notifications')); };
+    const skill = advice(readFileSync(PLUGIN_SKILL, 'utf8'));
+    const command = advice(readFileSync(COMMAND, 'utf8'));
     // The skill suggests the plugin's /mokkan, the user-level command itself (/mokkan-cli); the rest is the same.
-    expect(command.body).not.toMatch(/`\/mokkan /);
-    expect(skill.body.replace(PLUGIN_RUN_LINE, PATH_RUN_LINE).replaceAll('`/mokkan ', '`/mokkan-cli ')).toBe(command.body);
-    // The hints differ: typed /mokkan reaches the CLI without a shell (the mod answers it), /mokkan-cli through one.
+    expect(command).not.toMatch(/`\/mokkan /);
+    expect(skill).toContain('## Credits');
+    expect(skill.replaceAll('`/mokkan ', '`/mokkan-cli ')).toBe(command);
   });
 
   it('the Codex skill has the required frontmatter', () => {
