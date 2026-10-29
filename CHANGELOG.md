@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - **Claude calls a tool, not a shell.** The plugin's mod registers `mcp__mokkan__mokkan` (behind tool search) and the mokkan skill tells Claude to call it with the command and its arguments. The text reaches the CLI as argv, so quotes, `$`, backticks and `$(…)` in a reminder are kept as typed. The skill has no `!` line and no `allowed-tools` rule any more. The tool refuses `buy`, `logout`, `login`, `register`, `feedback`, `ui`, `accept`, `delete-account` and `notify setup|remove|poll` itself, whatever the model was told; `/mokkan <command>` still runs them when you type it.
 - **`/mokkan` completes in the prompt box.** After `/mokkan ` it offers the commands; after `edit`, `ack`, `done` or `undone` it offers the reminders that match what you typed (by text or id) and writes the id. It reads the list the pane already holds and starts no process.
